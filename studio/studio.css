@@ -565,3 +565,13 @@ button:focus-visible,a:focus-visible,summary:focus-visible,tr:focus-visible,inpu
 @media (max-width:1500px){.nlcompose{grid-template-columns:minmax(0,1fr)}}
 /* un formulaire court ne s'etire pas sur toute la page */
 .pages .fields.sender{max-width:820px}.pages .fields.sender select{width:100%}
+/* sous 900 px le sous-menu ne disparait plus : il devient une bande qui defile en haut de l'ecran */
+@media (max-width:900px){
+  .subnav{display:flex;flex-direction:row;align-items:center;top:0;bottom:auto;left:var(--rail);right:0;width:auto;height:54px;padding:0 12px;border-right:0;border-bottom:1px solid var(--line);overflow-x:auto;overflow-y:hidden;z-index:7}
+  .subhead,.objects .group{display:none}
+  .objects{flex-direction:row;gap:4px;padding:0;white-space:nowrap}
+  .objects .sub{width:auto;padding:8px 12px}.objects .sub .n{float:none;margin-left:6px}
+  .main{margin-top:54px}.bar{top:54px;height:auto;min-height:60px;padding:10px 16px;gap:10px}.bar h1{font-size:22px}
+  .tablewrap{padding:4px 16px 60px}.pages{padding:10px 16px 60px}
+}
+.railfoot .quiet{white-space:normal;line-height:1.25;max-width:100%}
