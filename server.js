@@ -263,6 +263,12 @@ http.createServer(function(req, res){
   var u;
   try { u = new URL(req.url, 'http://x'); } catch (e){ return fail(res, 400, 'bad url'); }
   var user = verify(cookieOf(req)), pth = u.pathname;
+  /* OPEN_STUDIO=1 : la porte ouverte, sans login, sur le Mac seulement. Refusee des que le programme
+     ecoute ailleurs que sur cette machine ou sert le site au public. */
+  if (!user && ENV.OPEN_STUDIO === '1' && cfg.host === '127.0.0.1' && !cfg.publicSite){
+    var first = users().filter(function(a){ return a.role === 'admin'; })[0];
+    if (first) user = { email: first.email, name: first.name, role: first.role };
+  }
   var oops = function(e){ if (!res.headersSent) fail(res, e.message === 'body too large' ? 413 : (e.message === 'bad json' ? 400 : 500), e.message); };
   for (var k = 0; k < MODULES.length; k++){
     if (!MODULES[k].open) continue;
