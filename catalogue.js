@@ -237,12 +237,12 @@ module.exports = function(cfg){
   function galHTML(name, variants, pre){
     function attr(v){ return esc(v); }
     var p = { name: name };
-    return variants.map(function(v, i){ return '<div class="gal-groupe" data-couleur="' + v.couleur + '" data-pierre="' + attr(v.pierre) + '"' + (i ? ' hidden' : '') + '><div class="gal-vue"><img src="' + pre + v.image + '" alt="' + attr(p.name) + '"></div>' + (v.extra || '') + '</div>'; }).join('');
+    return variants.map(function(v, i){ return '<div class="gal-groupe" data-couleur="' + v.couleur + '" data-pierre="' + attr(v.pierre) + '"' + (i ? ' hidden' : '') + '><div class="gal-vue"><img src="' + pre + v.image + '" alt="' + attr(p.name) + '"' + (v.attrs || '') + '></div>' + (v.extra || '') + '</div>'; }).join('');
   }
   function achatHTML(p, variants, pre){
     function attr(v){ return esc(v); }
     var vigns = variants.length > 1 ? '<div class="variations"><p class="variations-titre">Variations</p><div class="gal-vigns">' + variants.map(function(v, i){
-      return '<button class="gal-vign' + (i ? '' : ' is-on') + '" data-couleur="' + v.couleur + '" data-pierre="' + attr(v.pierre) + '" type="button" aria-label="' + attr(v.aria || v.pierre) + '"><img src="' + pre + v.image + '" alt=""></button>'; }).join('') + '</div></div>' : '';
+      return '<button class="gal-vign' + (i ? '' : ' is-on') + '" data-couleur="' + v.couleur + '" data-pierre="' + attr(v.pierre) + '" type="button" aria-label="' + attr(v.aria || v.pierre) + '"><img src="' + pre + v.image + '" alt=""' + (v.vattrs || '') + '></button>'; }).join('') + '</div></div>' : '';
     var sels = p.options.map(function(o){
       return '<div class="sel" data-axe="' + attr(o.a) + '">\n  <button class="sel-tete"><span class="sel-label">' + esc(o.l) + '</span><span class="sel-val"></span><span class="chev">&rsaquo;</span></button>\n  <div class="sel-corps" hidden>' + o.v.map(function(v){
         var m = o.a === 'Monture' ? MONTURES.filter(function(x){ return x.value === v; })[0] : null;
@@ -472,7 +472,7 @@ module.exports = function(cfg){
     var ref = /R\u00e9f\u00e9rence du produit : ([^<]*)</.exec(h), ul = /<ul class="attributs">([\s\S]*?)<\/ul>/.exec(h), details = [], re = /<li><span>([^<]*)<\/span>\s*([^<]*)<\/li>/g, m;
     if (ul) while ((m = re.exec(ul[1]))) details.push([unesc(m[1]), unesc(m[2])]);
     var variants = [], g = /<div class="gal">([\s\S]*?)<\/div>\n  <div class="achat"/.exec(h);
-    if (g){ GROUP.lastIndex = 0; while ((m = GROUP.exec(g[1]))){ var first = /^<div class="gal-vue[^"]*"><img src="(?:\.\.\/)*([^"]+)"[^>]*><\/div>/.exec(m[3]); variants.push({ couleur: m[1], pierre: unesc(m[2]), image: first[1], extra: m[3].slice(first[0].length) }); } }
+    if (g){ GROUP.lastIndex = 0; while ((m = GROUP.exec(g[1]))){ var first = /^<div class="gal-vue[^"]*"><img src="(?:\.\.\/)*([^"]+)"(?: alt="[^"]*")?([^>]*)><\/div>/.exec(m[3]); variants.push({ couleur: m[1], pierre: unesc(m[2]), image: first[1], attrs: first[2] || '', extra: m[3].slice(first[0].length) });   /* attrs: what else the photo's tag carries (the lighter phone versions), kept with the photo */ } }
     var axis = function(a){ var o = base.options.filter(function(x){ return x.a === a; })[0]; return o ? o.v : []; }, size = AXES[base.rayon];
     var p = Object.assign({}, base, { ligne: unesc(t[1] || ''), description: paras.join('\n\n'), reference: ref ? unesc(ref[1]).trim() : '', details: details, variants: variants,
       montures: axis('Monture'), sizes: size ? axis(size.a) : [] });
@@ -481,6 +481,8 @@ module.exports = function(cfg){
     var haut = hautOf(h);
     var arias = []; if (haut) haut.html.replace(/<button class="gal-vign[^>]*aria-label="([^"]*)"/g, function(a, x){ arias.push(unesc(x)); });
     variants.forEach(function(v, i){ if (arias[i]) v.aria = arias[i]; });
+    var vat = []; if (haut) haut.html.replace(/<button class="gal-vign[^>]*><img src="[^"]*" alt=""([^>]*)>/g, function(a, x){ vat.push(x); });
+    variants.forEach(function(v, i){ v.vattrs = vat[i] || ''; });   /* the thumbnail's own extra attributes, kept too */
     var flat = function(x){ return x.replace(/\s+/g, ' ').replace(/> </g, '><'); };
     p.special = !haut || flat(hautHTML(p, variants)) !== flat(haut.html);
     var tr = translationsOf([p.ligne, paras[0] || '']);
@@ -532,7 +534,7 @@ module.exports = function(cfg){
           if (ph.data) return { couleur: ph.couleur, pierre: typo(ph.pierre || 'Diamant'), image: files[k++], extra: '' };
           var old = cur.variants.filter(function(v){ return v.image === ph.image; })[0];
           if (!old) throw new Error('photo ' + (i + 1) + ' : image inconnue');
-          return { couleur: ph.couleur, pierre: typo(ph.pierre || 'Diamant'), image: old.image, extra: old.extra, aria: old.couleur === ph.couleur && old.pierre === typo(ph.pierre || 'Diamant') ? old.aria : '' };
+          return { couleur: ph.couleur, pierre: typo(ph.pierre || 'Diamant'), image: old.image, attrs: old.attrs, vattrs: old.vattrs, extra: old.extra, aria: old.couleur === ph.couleur && old.pierre === typo(ph.pierre || 'Diamant') ? old.aria : '' };
         });
         var montures = (input.montures || []).filter(function(v){ return MONTURES.some(function(m){ return m.value === v; }); });
         var pierres = variants.map(function(v){ return v.pierre; }).filter(function(v, i, a){ return a.indexOf(v) === i; }), sizes = (input.sizes || []).map(function(v){ return typo(v); }).filter(Boolean);

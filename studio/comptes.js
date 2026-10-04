@@ -24,8 +24,8 @@ X.register('comptes', function(host){
   });
   var sec = node('div', 'sec', host); node('h3', '', sec, 'Nouveau compte');
   var f = node('div', 'fields sender', host), F = {};
-  [['email', 'Identifiant', 'Prénom ou e-mail', 'text'], ['name', 'Nom affiché', '', 'text'], ['password', 'Mot de passe', 'Dix caractères au moins', 'password']].forEach(function(d){ var r = node('div', 'field', f); node('label', '', r, d[1]); var i = node('input', '', r); i.type = d[3]; i.placeholder = d[2]; i.autocomplete = d[3] === 'password' ? 'new-password' : 'off'; F[d[0]] = i; });
-  var rr = node('div', 'field', f); node('label', '', rr, 'Rôle'); var rs = node('select', '', rr); Object.keys(ROLES).forEach(function(k){ var o = node('option', '', rs, ROLES[k]); o.value = k; }); rs.value = 'lecture';
+  [['email', 'Identifiant', 'Prénom ou e-mail', 'text'], ['name', 'Nom affiché', '', 'text'], ['password', 'Mot de passe', 'Dix caractères au moins', 'password']].forEach(function(d){ var r = node('div', 'field half', f); node('label', '', r, d[1]); var i = node('input', '', r); i.type = d[3]; i.placeholder = d[2]; i.autocomplete = d[3] === 'password' ? 'new-password' : 'off'; F[d[0]] = i; });
+  var rr = node('div', 'field half', f); node('label', '', rr, 'Rôle'); var rs = node('select', '', rr); Object.keys(ROLES).forEach(function(k){ var o = node('option', '', rs, ROLES[k]); o.value = k; }); rs.value = 'lecture';
   var act = node('div', 'actions marks', host), go = node('button', 'mark', act, 'Créer le compte');
   go.addEventListener('click', function(){ api('users', { method: 'POST', json: { email: F.email.value, name: F.name.value, password: F.password.value, role: rs.value } }).then(function(r){ if (!r.ok){ toast(r.body.error || 'Non créé', true); return; } toast('Compte créé.'); load(); }); });
 });

@@ -563,3 +563,5 @@ button:focus-visible,a:focus-visible,summary:focus-visible,tr:focus-visible,inpu
 /* le mail et son apercu se partagent la largeur qui reste, sans deborder */
 .nlcompose{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}#pages:has(.nlcompose){max-width:none}.nlright{min-width:0}
 @media (max-width:1500px){.nlcompose{grid-template-columns:minmax(0,1fr)}}
+/* un formulaire court ne s'etire pas sur toute la page */
+.pages .fields.sender{max-width:820px}.pages .fields.sender select{width:100%}
