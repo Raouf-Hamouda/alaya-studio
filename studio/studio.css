@@ -558,3 +558,8 @@ button:focus-visible,a:focus-visible,summary:focus-visible,tr:focus-visible,inpu
 /* les pastilles gardent leur forme meme a l'interieur d'un champ (l'etiquette du champ ne les habille pas) */
 .field .checks label.option-row,.formpiece .fields.sender .field .checks label.option-row,.pages .fields.sender .field .checks label.option-row,.options label.option-row{display:inline-flex;padding:8px 14px;font-size:var(--fs-sm);font-weight:500;color:var(--ink);gap:0}
 .field .checks label.option-row:has(input:checked),.formpiece .fields.sender .field .checks label.option-row:has(input:checked),.pages .fields.sender .field .checks label.option-row:has(input:checked),.options label.option-row:has(input:checked){color:#fff;background:var(--ink);border-color:var(--ink)}
+/* un sous-menu plus long que la fenetre defile, il ne se coupe pas */
+.subnav{overflow-y:auto;overscroll-behavior:contain}.objects{padding-bottom:20px}.rail{overflow-y:auto}
+/* le mail et son apercu se partagent la largeur qui reste, sans deborder */
+.nlcompose{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}#pages:has(.nlcompose){max-width:none}.nlright{min-width:0}
+@media (max-width:1500px){.nlcompose{grid-template-columns:minmax(0,1fr)}}
