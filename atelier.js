@@ -368,7 +368,7 @@ module.exports = function(cfg, tools){
   }
 
   /* ---------- the management layer (atelier-gestion.js): production, vendors, transport, foundry, reports, gold, dashboard ---------- */
-  var G = require('./atelier-gestion')(cfg, tools, { TYPES: TYPES, MAISON: MAISON, fileOf: fileOf, load: load, save: save, maison: maison, newId: newId, nextRef: nextRef, everHad: everHad });
+  var G = require('./atelier-gestion')(cfg, tools, { TYPES: TYPES, MAISON: MAISON, fileOf: fileOf, load: load, save: save, maison: maison, newId: newId, nextRef: nextRef, everHad: everHad, qrSVG: qrSVG });
 
   /* ---------- the routes, under /api/atelier ---------- */
   function api(req, res, u, user, p){
@@ -380,21 +380,23 @@ module.exports = function(cfg, tools){
     if (G_ && type === 'all'){
       var out = { types: {}, maison: maison(), maisonFields: MAISON, records: {} };
       Object.keys(TYPES).forEach(function(k){ var t = TYPES[k], list = load(k);
-        out.types[k] = { one: t.one, name: t.name, list: t.list, groups: t.groups, money: !!t.money, fromQuote: !!t.fromQuote, noDoc: !!t.noDoc, noCreate: !!t.noCreate, next: t.byNumber ? nextNumber(everHad(k, list)) : nextRef(k, everHad(k, list)) };
-        out.records[k] = list.map(function(r){ return Object.assign({}, r, t.view ? t.view(r) : null, t.money ? { total: t.total ? t.total(r) : total(t.fromQuote ? (r.quote || {}) : r) } : null); }); });
-      G.extend(out);
+        out.types[k] = { one: t.one, name: t.name, list: t.list, groups: t.groups, steps: t.steps, last: t.last, money: !!t.money, fromQuote: !!t.fromQuote, noDoc: !!t.noDoc, noCreate: !!t.noCreate, next: t.byNumber ? nextNumber(everHad(k, list)) : nextRef(k, everHad(k, list)) };
+        out.records[k] = list.map(function(r){ return Object.assign({ itemsCount: ((t.fromQuote ? (r.quote || {}).items : r.items || r.deliveryNoteItem || r.transportItem) || []).length }, r, t.view ? t.view(r) : null, t.money ? { total: t.total ? t.total(r) : total(t.fromQuote ? (r.quote || {}) : r) } : null); }); });
+      G.extend(out, user);
       tools.send(res, 200, out); return true;
     }
     if (G_ && type === 'image' && /^[a-z0-9-]+\.(jpg|png|webp)$/.test(id || '')){ tools.serveFile(req, res, path.join(IMG, id)); return true; }
     if (!TYPES[type] && type !== 'maison'){ tools.fail(res, 404, 'not found'); return true; }
     if (G_ && TYPES[type] && !TYPES[type].noDoc && parts[2] === 'document'){
-      var doc = load(type).filter(function(r){ return r.id === id; })[0];
+      var doc = !G.can(user, type, false) ? null : load(type).filter(function(r){ return r.id === id; })[0];
       if (!doc){ tools.fail(res, 404, 'not found'); return true; }
       tools.send(res, 200, page(type, doc), { 'Content-Type': 'text/html; charset=utf-8' }); return true;
     }
     if (G_){ tools.fail(res, 404, 'not found'); return true; }
-    if (user.role !== 'admin'){ tools.fail(res, 403, 'not allowed'); return true; }
+    /* his permissions: an admin writes everywhere, anyone else only where it is ticked for them (the house's settings stay with the admins) */
+    if (!(type === 'maison' ? user.role === 'admin' : G.can(user, type, true))){ tools.fail(res, 403, 'not allowed'); return true; }
     if (req.method === 'DELETE' && TYPES[type] && id){
+      if (!G.canDelete(user, type)){ tools.fail(res, 403, 'not allowed'); return true; }
       var all = load(type), gone = all.filter(function(r){ return r.id === id; })[0];
       if (!gone){ tools.fail(res, 404, 'not found'); return true; }
       /* nothing is destroyed: what leaves the list is appended to the bin of its object */
@@ -416,13 +418,13 @@ module.exports = function(cfg, tools){
             if (!q) throw new Error('il faut choisir un devis');
             rec.quote = JSON.parse(JSON.stringify(q));
           }
-          if (!t.byNumber) rec.reference = nextRef(type, everHad(type, list));
+          if (!t.byNumber) rec.reference = type === 'factures' && maison().invoiceNumbering === 'ilyes' ? G.hisInvoiceRef(b.filed === true, everHad(type, list)) : nextRef(type, everHad(type, list));
           list.push(rec);
         } else if (req.method === 'PUT' && id){
           rec = list.filter(function(r){ return r.id === id; })[0];
           if (!rec) return tools.fail(res, 404, 'not found');
         } else return tools.fail(res, 404, 'not found');
-        clean(fieldsOf(type), b, rec); photo(rec, b);
+        clean((type === 'productions' && G.prodFields(user)) || fieldsOf(type), b, rec); if (user.role === 'admin' || type !== 'productions') photo(rec, b);
         if (t.compute) t.compute(rec);
         if (t.byNumber){
           if (!rec.number) rec.number = nextNumber(everHad(type, list.filter(function(r){ return r !== rec; })));
@@ -463,5 +465,14 @@ if (require.main === module){
   /* the income report of an invoice of that quote: 1815 made, sold 1815 x 1.1 = 1996.5, revenue 181.5 */
   assert.deepStrictEqual(m.G.income({ income: { reference: 'x', quote: { customerName: 'c', gainPercentage: 10, items: [{ price: 1815, quantity: 1, product: pr }] } } }), { reference: 'x', customerName: 'c', items: 1, manufacturing: 1815, margin: 10, sellingPrice: 1996.5, revenue: 181.5 });
   assert.strictEqual(m.nextRef('productions', []), '000000'); assert.strictEqual(m.nextRef('productions', [{ reference: '000041' }]), '000042');
+  /* his invoice numbers: filed ones count on their own, the others carry nd */
+  var st = function(){ var d = new Date(); return String(d.getDate()).padStart(2, '0') + String(d.getMonth() + 1).padStart(2, '0') + d.getFullYear(); }();
+  assert.strictEqual(m.G.hisInvoiceRef(true, []), '1-ref' + st); assert.strictEqual(m.G.hisInvoiceRef(true, [{ reference: '7-ref01012026' }, { reference: 'nd40-ref01012026' }, { reference: 'FAC-2026-0009' }]), '8-ref' + st);
+  assert.strictEqual(m.G.hisInvoiceRef(false, [{ reference: '7-ref01012026' }, { reference: 'nd40-ref01012026' }]), 'nd41-ref' + st);
+  /* his permissions: nothing ticked, nothing allowed; an admin is never asked */
+  assert.strictEqual(m.G.can({ role: 'admin' }, 'devis', true), true); assert.strictEqual(m.G.can({ role: 'producer', email: 'x' }, 'devis', true), false); assert.strictEqual(m.G.can({ role: 'producer', email: 'x' }, 'productions', false), false);
+  /* his ticket: 0.50 ct of diamonds, 5.00 g of gold, 1 ct of sapphire, 10 stones, the cost times the factor */
+  var tk = m.G.ticket(Object.assign({ reference: '000007', gemsItems: [{ carat: 1, xe: 300, type: 'Sapphire' }] }, pr, { gemsItems: [{ carat: 1, type: 'Sapphire' }] }), m.qrSVG);
+  assert.ok(/#000007/.test(tk) && /5445\.00€/.test(tk) && /0\.50ct/.test(tk) && /5\.00g/.test(tk) && /1ct 1Sa 10PT/.test(tk), 'ticket');
   console.log('atelier ok');
 }
