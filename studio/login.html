@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Alaya, le studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500&family=Manrope:wght@400;500;600&family=Overpass+Mono:wght@400&display=swap">
+<link rel="stylesheet" href="studio.css">
+<style>
+  /* the door to the studio: the house mark, two lines, one press */
+  .door{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--g1);padding:24px}
+  .doorbox{width:320px}
+  .doorbox img{width:150px;display:block;margin:0 0 42px}
+  .doorbox .cap{display:block;margin-bottom:26px;font-family:var(--edito);font-size:21px}
+  .doorbox label{display:block;font-size:var(--fs-sm);font-weight:500;color:var(--mute);margin:18px 0 0}
+  .doorbox input{width:100%;box-sizing:border-box;height:36px;padding:6px 0;border:0;border-bottom:1px solid var(--line-hard);border-radius:0;
+    font:inherit;font-size:var(--fs-lg);color:var(--ink);background:transparent;transition:border-color .15s}
+  .doorbox input:hover{border-color:var(--g7)}
+  .doorbox input:focus{outline:none;border-color:var(--ink)}
+  .doorbox .btn{width:100%;margin-top:30px;height:36px;justify-content:center}
+  .doorbox .meta{display:block;min-height:18px;margin-top:14px;color:var(--danger);font-size:var(--fs-sm)}
+</style>
+</head>
+<body>
+<div class="door">
+  <form class="doorbox" id="door" autocomplete="on">
+    <img src="logo.png" alt="Alaya Fine Jewelry">
+    <span class="cap">Le studio</span>
+    <label for="email">Utilisateur</label>
+    <input id="email" name="email" type="text" autocapitalize="none" autocomplete="username" required autofocus>
+    <label for="password">Mot de passe</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button class="btn primary" type="submit">Entrer dans le studio</button>
+    <span class="meta" id="msg" role="alert"></span>
+  </form>
+</div>
+<script>
+(function(){
+  var FR = { 'wrong user or password': 'Utilisateur ou mot de passe incorrect', 'too many attempts': 'Trop d’essais' };
+  var t = function(s){ var k = Object.keys(FR).filter(function(k){ return s.indexOf(k) === 0; })[0]; return k ? s.replace(k, FR[k]).replace('wait', 'attendre') : s; };
+  var form = document.getElementById('door'), msg = document.getElementById('msg');
+  form.addEventListener('submit', function(e){
+    e.preventDefault(); msg.textContent = '';
+    fetch('../api/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'alaya' },
+      body: JSON.stringify({ email: form.email.value, password: form.password.value }) })
+    .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }); })
+    .then(function(x){
+      if (!x.ok){ msg.textContent = t(x.j.error || 'Connexion impossible'); return; }
+      location.replace('./');
+    })['catch'](function(){ msg.textContent = 'Le serveur n’a pas répondu'; });
+  });
+})();
+</script>
+</body>
+</html>

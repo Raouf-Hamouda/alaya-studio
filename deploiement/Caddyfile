@@ -1,0 +1,5 @@
+# Remplacer par le domaine du site. Caddy obtient et renouvelle le certificat.
+{$DOMAINE} {
+	encode zstd gzip
+	reverse_proxy studio:8776
+}

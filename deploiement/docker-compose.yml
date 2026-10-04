@@ -1,0 +1,22 @@
+# Le studio et le site sur un serveur, derriere Caddy qui tient le certificat HTTPS tout seul.
+# Depuis ce dossier, sur le serveur :  docker compose up -d --build
+# Les secrets sont dans .env a cote de ce fichier (voir env.exemple), jamais dans le depot.
+services:
+  studio:
+    build: { context: .., dockerfile: deploiement/Dockerfile }
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PUBLIC_SITE: "1"
+    volumes:
+      - ./site:/site        # le depot git du site (git clone), ecrit par le studio
+      - ./data:/data        # comptes, sauvegardes, atelier, mailing
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+volumes:
+  caddy_data:

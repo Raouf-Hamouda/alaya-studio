@@ -1,0 +1,21 @@
+/* LE MAILING : seulement ce qui manque a la feuille d'Instinct (studio.css) */
+.ed-area[data-vide]::after{content:'Écrivez ici.'}
+.pick button.row{width:100%;text-align:left}
+.pick .row.chosen{background:var(--g3)}
+.pick .row.chosen .k{color:var(--ink);font-weight:500}
+.pick .row .th,.item .th.sq{width:40px;height:40px;background:#fff;border:1px solid var(--line)}
+.pick .row .th img,.item .th.sq img{object-fit:contain}
+.nlleft .sec{margin-top:18px}
+.nlleft .sec .count{font-size:var(--fs-sm);color:var(--g9)}
+.nlleft .fhint{margin:2px 0 0 150px}
+.nlleft .marks{margin-top:12px}
+.nlleft .marks input.inline{flex:1;min-width:200px;max-width:320px}
+.nlright .note{margin:10px 2px 0}
+.pages .table tbody tr:not(.plain) td .btn{vertical-align:middle}
+@media(max-width:700px){.nlleft .fhint{margin-left:0}}
+.ed-bar select{height:26px;padding:0 6px;line-height:1}
+.pages .fields.sender .field .fhint{margin:2px 0 6px 2px}
+/* the empty-state line sits inside the first block, under its label, not over it */
+.editor.full .ed-area[data-vide]::after{top:28px;left:32px}
+.pages .fields.sender .field{row-gap:0;margin-bottom:8px}
+.pages .block > .marks{margin-bottom:12px}

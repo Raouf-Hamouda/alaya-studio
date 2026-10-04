@@ -1,0 +1,8 @@
+# ce qui ne part jamais dans le depot : les secrets, les donnees, les copies de travail
+.env
+data/
+deploiement/.env
+deploiement/site/
+deploiement/data/
+*.log
+.DS_Store

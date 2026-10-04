@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Alaya, le studio</title>
+<link rel="icon" href="../site/images/logo/favicon-64.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500&family=Manrope:wght@400;500;600&family=Overpass+Mono:wght@400&display=swap">
+<link rel="stylesheet" href="studio.css?v=20261004h">
+<link rel="stylesheet" href="atelier.css?v=20261004h">
+<link rel="stylesheet" href="mailing.css?v=20261004h">
+</head>
+<body>
+<!-- LE STUDIO ALAYA, SUR LE MODELE DU STUDIO INSTINCT (4 octobre 2026). Trois
+     etages : le rail des familles a gauche, le sous-menu de la famille a cote,
+     la barre au-dessus du contenu. Une table par objet, une fiche qui s'ouvre a
+     droite et la table garde sa place. -->
+<nav class="rail" id="rail" aria-label="Familles">
+  <div class="railbrand"><img src="logo.png" alt="Alaya Fine Jewelry" width="1812" height="315"></div>
+  <div class="railitems" id="railitems"></div>
+  <div class="railfoot"><span class="who" id="who"></span><button class="quiet" id="logout">Se déconnecter</button></div>
+</nav>
+<aside class="subnav" id="subnav" aria-label="Sous-menu"><div class="subhead" id="subhead"></div><nav class="objects" id="objects"></nav></aside>
+<main class="main">
+  <header class="bar">
+    <h1 id="title"></h1>
+    <span class="count" id="count"></span>
+    <label class="search"><input id="q" type="search" placeholder="Chercher" aria-label="Chercher"></label>
+    <span class="saved" id="saved" role="status" aria-live="polite"></span>
+    <button class="btn small" id="undo" hidden>Annuler la dernière écriture</button>
+    <button class="btn primary" id="new" hidden></button>
+  </header>
+  <section class="tablewrap"><table class="table" id="table"><thead></thead><tbody></tbody></table></section>
+  <section class="pages" id="pages" hidden></section>
+</main>
+<aside class="panel" id="panel" hidden aria-label="Fiche"></aside>
+<div class="toasts" id="toasts"></div>
+<script src="studio.js?v=20261004h"></script>
+<script src="textes.js?v=20261004h"></script>
+<script src="atelier.js?v=20261004h"></script>
+<script src="mailing.js?v=20261004h"></script>
+<script src="comptes.js?v=20261004h"></script>
+<script src="vente.js?v=20261004h"></script>
+<script src="publier.js?v=20261004h"></script>
+</body>
+</html>
