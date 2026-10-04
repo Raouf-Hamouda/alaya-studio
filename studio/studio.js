@@ -222,7 +222,7 @@ function drawForm(host, F, edit){
   function row(box, label, tall){ var f = node('div', 'field' + (tall ? ' tall' : ''), box); node('label', '', f, label); return f; }
   function input(box, label, key, ph, type){ var f = row(box, label), i = node('input', '', f); i.type = type || 'text'; i.value = F[key]; if (ph) i.placeholder = ph; i.addEventListener('input', function(){ F[key] = i.value; where(); }); return i; }
   function area(box, label, key, ph, rows){ var f = row(box, label, true), a = node('textarea', '', f); a.rows = rows; a.value = F[key]; a.placeholder = ph; a.addEventListener('input', function(){ F[key] = a.value; }); return a; }
-  function select(box, label, key, options){ var f = row(box, label), se = node('select', '', f); options.forEach(function(o){ var op = node('option', '', se, o[1]); op.value = o[0]; }); se.value = F[key]; return se; }
+  function select(box, label, key, options){ var f = row(box, label), se = node('select', '', f); f.classList.add('half'); options.forEach(function(o){ var op = node('option', '', se, o[1]); op.value = o[0]; }); se.value = F[key]; return se; }
   function checks(box, label, list, key){ var f = row(box, label, true), g = node('div', 'checks', f); list.forEach(function(o){ var l = node('label', 'option-row', g), c = node('input', '', l); c.type = 'checkbox'; c.checked = F[key].indexOf(o[0]) >= 0; node('span', '', l, o[1]); c.addEventListener('change', function(){ F[key] = F[key].filter(function(x){ return x !== o[0]; }); if (c.checked) F[key].push(o[0]); }); }); }
 
   var a = sec('La pièce');
@@ -232,7 +232,7 @@ function drawForm(host, F, edit){
   if (edit && F.locked){ ray.disabled = true; }
   var col = select(a, 'Collection', 'collection', [['', 'Aucune']].concat(Object.keys(V.collections).map(function(k){ return [k, V.collections[k]]; })));
   col.addEventListener('change', function(){ F.collection = col.value; where(); });
-  var priceI = input(a, 'Prix en euros', 'price', 'Vide = Prix sur demande', 'number'); priceI.min = 0; priceI.step = 1;
+  var priceI = input(a, 'Prix en euros', 'price', 'Vide = Prix sur demande', 'number'); priceI.min = 0; priceI.step = 1; priceI.parentNode.classList.add('half');
 
   var b = sec('Où elle paraît');
   var sf = row(b, 'Sections', true), sg = node('div', 'checks', sf);
