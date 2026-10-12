@@ -8,25 +8,26 @@
 <link rel="icon" href="../site/images/logo/favicon-64.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="studio.css?v=20261004j">
-<link rel="stylesheet" href="atelier.css?v=20261004j">
-<link rel="stylesheet" href="mailing.css?v=20261004j">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="studio.css?v=20261010a">
+<link rel="stylesheet" href="atelier.css?v=20261007a">
+<link rel="stylesheet" href="mailing.css?v=20261007a">
+<link rel="stylesheet" href="systeme.css?v=20261010t">
 </head>
 <body>
-<!-- LE STUDIO ALAYA, SUR LE MODELE DU STUDIO INSTINCT (4 octobre 2026). Trois
+<!-- LE STUDIO ALAYA (4 octobre 2026, la forme de Twenty et de Notion depuis le 7). Trois
      etages : le rail des familles a gauche, le sous-menu de la famille a cote,
      la barre au-dessus du contenu. Une table par objet, une fiche qui s'ouvre a
-     droite et la table garde sa place. -->
+     droite et la table garde sa place, un menu au clic droit sur chaque ligne. -->
 <nav class="rail" id="rail" aria-label="Familles">
   <div class="railbrand"><img src="logo.png" alt="Alaya Fine Jewelry" width="1812" height="315"></div>
   <div class="railitems" id="railitems"></div>
-  <div class="railfoot"><span class="who" id="who"></span><button class="quiet" id="logout">Se déconnecter</button></div>
+  <div class="railfoot"><div class="who" id="who"></div><button class="quiet" id="logout" title="Se déconnecter">Quitter</button></div>
 </nav>
 <aside class="subnav" id="subnav" aria-label="Sous-menu"><div class="subhead" id="subhead"></div><nav class="objects" id="objects"></nav></aside>
 <main class="main">
   <header class="bar">
-    <h1 id="title"></h1>
+    <span class="crumb" id="crumb"></span><h1 id="title"></h1>
     <span class="count" id="count"></span>
     <label class="search"><input id="q" type="search" placeholder="Chercher" aria-label="Chercher"></label>
     <span class="saved" id="saved" role="status" aria-live="polite"></span>
@@ -38,12 +39,17 @@
 </main>
 <aside class="panel" id="panel" hidden aria-label="Fiche"></aside>
 <div class="toasts" id="toasts"></div>
-<script src="studio.js?v=20261004j"></script>
-<script src="textes.js?v=20261004j"></script>
-<script src="atelier.js?v=20261004j"></script>
-<script src="mailing.js?v=20261004j"></script>
-<script src="comptes.js?v=20261004j"></script>
-<script src="vente.js?v=20261004j"></script>
-<script src="publier.js?v=20261004j"></script>
+<script src="studio.js?v=20261010t"></script>
+<script src="textes.js?v=20261007a"></script>
+<script src="rapi.js?v=20261010s"></script>
+<script src="atelier.js?v=20261010t"></script>
+<script src="mailing.js?v=20261007a"></script>
+<script src="comptes.js?v=20261007a"></script>
+<script src="vente.js?v=20261007a"></script>
+<script src="publier.js?v=20261007a"></script>
+<script src="accueil.js?v=20261010t"></script>
+<script src="stock.js?v=20261007a"></script>
+<script src="clients.js?v=20261007a"></script>
+<script src="reglages.js?v=20261007a"></script>
 </body>
 </html>

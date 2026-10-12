@@ -51,6 +51,20 @@ try {
   var d2 = differing(true), typo = d2.filter(function(f){ return /^piece\//.test(f); });
   ok(d2.length === typo.length && typo.length <= sample.length, sample.length + ' pieces renvoyees telles quelles : rien ne bouge hors l\'estampille' + (typo.length ? ' (et l\'espace insecable pose sur ' + typo.length + ' fiche' + (typo.length > 1 ? 's' : '') + ')' : ''));
   ok(fs.readFileSync(path.join(A, 'netlify/functions/catalogue.json'), 'utf8') === rd('netlify/functions/catalogue.json'), 'le fichier des prix du paiement n\'a pas bouge');
+  /* 5 Oct 2026: the piece page was redrawn (texts in the buying card and the panels) and the studio, still reading the old
+     layout, wiped the descriptions and the Pierres row on every save. Every piece is now sent back, and a price goes and returns. */
+  reset();
+  var whole = slugs.filter(function(s){ return special.indexOf(s) < 0; }), lost = [];
+  whole.forEach(function(s){ var g = cat.get(s); if (!g.ligne || !g.description) lost.push(s); cat.update(s, asInput(g)); });
+  var d3 = differing(true).filter(function(f){ return f !== 'langues.js'; });
+  ok(!lost.length, whole.length + ' pieces : la phrase et la description sont lues sur la fiche' + (lost.length ? ' (vides : ' + lost.slice(0, 5).join(', ') + ')' : ''));
+  ok(!d3.length, whole.length + ' pieces renvoyees telles quelles : aucune page ne change' + (d3.length ? ' (' + d3.length + ' : ' + d3.slice(0, 5).join(', ') + ')' : ''));
+  var one = whole.filter(function(s){ return /class="li-pierres"/.test(rd('piece/' + s + '/index.html')); })[0], g1 = cat.get(one), before = rd('piece/' + one + '/index.html');
+  cat.update(one, Object.assign(asInput(g1), { price: g1.price + 1 }));
+  var after = rd('piece/' + one + '/index.html'), meta = function(h){ return (/<meta name="description" content="([^"]*)"/.exec(h) || [])[1]; };
+  ok(meta(after) === meta(before) && /class="li-pierres"/.test(after) && /class="acc-faits"/.test(after) && /class="achat-idee"/.test(after), 'un prix change sur ' + one + ' : description, ligne Pierres, phrase et SEO restent');
+  cat.update(one, asInput(g1));
+  ok(rd('piece/' + one + '/index.html') === before, 'le prix remis : la fiche revient a l\'octet pres');
 
   console.log('\n3. Ajouter, sections, modifier, traduire, retirer, annuler');
   reset();
@@ -83,7 +97,9 @@ try {
   reset();
   var pg = textes.pages().filter(function(f){ return /la-maison/.test(f); })[0] || textes.pages()[0], v = textes.view(pg), t = v.texts.filter(function(x){ return x.plain && x.tag === 'p'; })[0];
   ok(textes.save(pg, { texts: [], images: [] }).changed === 0 && !differing(false).length, 'page ' + pg + ' : ' + v.texts.length + ' textes, ' + v.images.length + ' images ; enregistrer sans changement ne change rien');
-  textes.save(pg, { texts: [{ i: t.i, text: t.text + ' Ajout ; pour voir.' }] }); ok(rd(pg).indexOf('Ajout ; pour voir.') > 0 && differing(false).length === 1, 'un paragraphe change : une seule page touchee, la typographie posee');
+  textes.save(pg, { texts: [{ i: t.i, text: t.text + ' Ajout ; pour voir.' }] }); ok(rd(pg).indexOf('Ajout ; pour voir.') > 0 && differing(true).filter(function(f){ return f !== 'langues.js'; }).join() === pg, 'un paragraphe change : une seule page touchee (hors estampille et langues.js), la typographie posee');
+  var W = {}; require('vm').runInNewContext(rd('langues.js'), { window: W }); var EN = W.ALAYA_LANGUES.PHRASES.en, newFr = Object.keys(EN).filter(function(k){ return k.indexOf('Ajout') > 0; })[0];
+  ok(!EN[t.text] || (newFr && EN[newFr] === EN[t.text]), 'sa traduction anglaise suit le paragraphe modifie');
   cat.undo(); ok(!differing(false).length, 'annule : identique');
   var ch = textes.chrome(), first = ch[0], res = textes.saveChrome({ texts: [{ i: first.i, text: first.text + ' bis' }] });
   var w2 = {}; vm.runInNewContext(rd('langues.js'), { window: w2 });

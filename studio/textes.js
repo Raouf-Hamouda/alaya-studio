@@ -9,7 +9,7 @@ var NAMES = { h1: 'Titre', h2: 'Titre 2', h3: 'Titre 3', h4: 'Titre 4', p: 'Para
   dt: 'Terme', dd: 'Définition', th: 'En-tête de tableau', td: 'Case de tableau', label: 'Étiquette', button: 'Bouton', span: 'Étiquette', a: 'Lien' };
 var list = null, q = '';
 
-X.menu('Site', [{ label: 'Pages du site', key: 'textes' }, { group: 'Mise en ligne' }, { label: 'Publier', key: 'publier' }]);
+X.menu('Site', [{ label: 'Pages du site', key: 'textes' }, { group: 'Mise en ligne' }, { label: 'Publier', key: 'publier' }, { label: 'Voir le site ↗', door: SITE + 'index.html' }]);
 X.register('textes', function(host){
   X.title('Pages du site');
   if (!list){ node('p', 'note', host, 'Lecture des pages…'); api('textes').then(function(r){ if (!r.ok){ toast('Les pages ne se lisent pas : ' + (r.body.error || r.status), true); return; } list = r.body.pages; X.redraw(); }); return; }
@@ -17,7 +17,7 @@ X.register('textes', function(host){
   var s = node('input', 'inline', bar); s.type = 'search'; s.placeholder = 'Chercher une page'; s.value = q; s.setAttribute('aria-label', 'Chercher une page');
   node('span', 'note', bar, 'Les textes et les images du corps de chaque page. L’en-tête, le menu et le pied de page se changent dans la première ligne ; les pièces se changent dans Pièces.');
   var wrap = node('div', 'tablewrap inner', host), table = node('table', 'table', wrap), hr = node('tr', '', node('thead', '', table)), tb = node('tbody', '', table);
-  ['Page', 'Adresse', 'Textes', 'Images', ''].forEach(function(t){ node('th', '', hr, t); });
+  [['Page', 'text'], ['Adresse', 'link'], ['Textes', 'number'], ['Images', 'image'], ''].forEach(function(t){ if (Array.isArray(t)) X.th(hr, t[0], t[1]); else node('th', '', hr, t); });
   var fill = function(){
     tb.innerHTML = ''; var n = 0;
     if (!q){ var all = node('tr', '', tb); node('td', 'first', all, 'Partout sur le site'); var c2 = node('td', 'mute', all, 'barre du haut, en-tête, menus, pied de page'); c2.colSpan = 4; all.tabIndex = 0; all.addEventListener('click', openChrome); all.addEventListener('keydown', function(e){ if (e.target === all && e.key === 'Enter') openChrome(); }); }
@@ -25,6 +25,7 @@ X.register('textes', function(host){
       if (q && (p.title + ' ' + p.file).toLocaleLowerCase().indexOf(q) < 0) return; n++;
       var tr = node('tr', '', tb); node('td', 'first', tr, p.title || p.file); node('td', 'mute', tr, p.file.replace(/index\.html$/, '') || '/'); node('td', 'num', tr, String(p.texts)); node('td', 'num', tr, String(p.images));
       var d = node('td', 'door', tr), a = node('a', 'btn small', d, 'Voir ↗'); a.href = SITE + p.file; a.target = '_blank'; a.rel = 'noopener'; a.addEventListener('click', function(e){ e.stopPropagation(); });
+      X.rowMenu(tr, function(){ return [{ label: 'Ouvrir', icon: 'open', run: function(){ open(p); } }, { label: 'Voir sur le site', icon: 'ext', href: SITE + p.file }, { label: 'Copier l’adresse', icon: 'copy', run: function(){ X.copy('https://alayafinejewelry.com/' + p.file.replace(/index\.html$/, '')); } }]; }, p.title || p.file);
       tr.tabIndex = 0; tr.addEventListener('click', function(){ open(p); }); tr.addEventListener('keydown', function(e){ if (e.target === tr && e.key === 'Enter') open(p); });
     });
     X.count(String(n));
@@ -76,9 +77,12 @@ function open(p){
     var h3 = node('div', 'sec', sheet.body); node('h3', '', h3, 'Textes'); node('span', 'count', h3, String(d.texts.length));
     var f1 = node('div', 'fields', sheet.body);
     if (!d.texts.length) node('p', 'note', f1, 'Aucun texte dans le corps de cette page.');
+    var under = '';   /* each text is named by the heading it sits under, so it can be found on the page */
     d.texts.forEach(function(t){
-      var a = area(f1, NAMES[t.tag] || t.tag, t.text, rowsFor(t.text), function(v){ if (v === t.text) delete dirty.texts[t.i]; else dirty.texts[t.i] = v; });
-      if (!t.plain){ a.style.fontFamily = 'ui-monospace,Menlo,monospace'; a.style.fontSize = '12px'; node('div', 'fhint', a.parentNode, 'Ce texte porte des liens ou des mises en forme : les balises restent, le texte entre elles se change.'); }
+      var name = NAMES[t.tag] || t.tag, plainText = t.text.replace(/<[^>]*>/g, '').trim();
+      if (/^h[1-4]$/.test(t.tag)) under = plainText.length > 40 ? plainText.slice(0, 40) + '…' : plainText; else if (under) name += ' · sous « ' + under + ' »';
+      var a = area(f1, name, t.text, rowsFor(t.text), function(v){ if (v === t.text) delete dirty.texts[t.i]; else dirty.texts[t.i] = v; });
+      if (!t.plain){ node('div', 'fhint', a.parentNode, 'Ce texte porte des liens ou des mises en forme : les balises restent, le texte entre elles se change.'); }
     });
 
     if (d.images.length){
@@ -91,7 +95,12 @@ function open(p){
         alt.addEventListener('input', touch);
         if (admin){
           var lab = node('label', 'btn small', c, 'Remplacer l’image'), fi = node('input', '', lab); fi.type = 'file'; fi.accept = 'image/jpeg,image/png,image/webp'; fi.hidden = true;
-          fi.addEventListener('change', function(){ var file = fi.files[0]; if (!file) return; var rd = new FileReader(); rd.onload = function(){ pic.src = rd.result; var e = dirty.images[im.i] || {}; e.data = rd.result; dirty.images[im.i] = e; mark(); }; rd.readAsDataURL(file); });
+          var takeFile = function(file){ if (!file) return; if (!/^image\/(jpeg|png|webp)$/.test(file.type)){ toast(file.name + ' : il faut un JPEG, un PNG ou un WebP', true); return; } var rd = new FileReader(); rd.onload = function(){ pic.src = rd.result; var e = dirty.images[im.i] || {}; e.data = rd.result; dirty.images[im.i] = e; mark(); }; rd.readAsDataURL(file); };
+          fi.addEventListener('change', function(){ takeFile(fi.files[0]); fi.value = ''; });
+          /* or the file dropped on the picture itself */
+          c.addEventListener('dragover', function(e){ e.preventDefault(); c.classList.add('hot'); }); c.addEventListener('dragleave', function(){ c.classList.remove('hot'); });
+          c.addEventListener('drop', function(e){ e.preventDefault(); c.classList.remove('hot'); takeFile(e.dataTransfer.files[0]); });
+          c.title = 'Glissez une image ici pour la remplacer';
         }
       });
     }

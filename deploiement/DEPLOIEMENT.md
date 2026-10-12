@@ -48,17 +48,20 @@ Le choix entre A et B, le serveur, et le moment ou le domaine bascule sont a Rao
 | `STRIPE_SECRET_KEY` | la cle Stripe ; vide, le paiement reste ferme |
 | `ALAYA_ORIGINES` | les adresses du site acceptees par la fonction de paiement (par defaut `PUBLIC_URL`) |
 | `MAILING_DAILY_CAP` | plafond d'envois par 24 h |
+| `STRIPE_WEBHOOK_SECRET` | la cle de signature du point de terminaison Stripe (`<PUBLIC_URL>/stripe/webhook`) : chaque commande arrive dans la base a la seconde ; vide, les commandes se lisent sur Relire |
 | `EGALISER` | chemin de l'outil qui met les photos au carre |
 
 ## Ce qui doit etre sauvegarde
 
-Le dossier `data/` (comptes, documents de l'atelier, contacts et envois, sauvegardes d'ecriture)
-et le depot du site. Le reste se reconstruit.
+Le dossier `data/` : la base `data/studio.sqlite` (l'atelier, le mailing, les commandes, le stock, les
+reglages ; une copie par jour dans `data/sauvegardes_base/`, trente gardees, une a telecharger dans
+Reglages > Sauvegardes), les comptes `users.json`, les sauvegardes d'ecriture du site, le mot de passe
+de la boite. Et le depot du site. Le reste se reconstruit.
 
 ## Ce qui n'est pas fait
 
 - Aucun deploiement, aucun domaine bascule, aucune cle Stripe posee.
 - Pas de sauvegarde automatique de `data/` vers un autre endroit.
-- Le webhook Stripe n'existe pas : le studio lit les commandes dans Stripe quand on ouvre l'ecran.
+- Le webhook Stripe existe depuis le 7 octobre (`/stripe/webhook`, signe) mais demande une adresse publique et `STRIPE_WEBHOOK_SECRET` ; sans lui, Relire dans Stripe.
 - La capture manuelle et le stock des pieces uniques (note du 4 aout, section 7) ne sont pas dans
   la fonction de paiement du site : aujourd'hui une carte est debitee des le paiement.

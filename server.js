@@ -20,6 +20,7 @@ var cfg = {
   studio: path.join(ROOT, 'studio'),
   site: path.resolve(ENV.SITE_DIR || path.join(ROOT, '..', '01_SITE_WEB', 'NEW VERSION', 'SITE double-clic')),
   secure: ENV.SECURE === '1',
+  coursAuto: ENV.COURS_AUTO !== '0',   /* les cours (or, argent, diamants) lus tout seuls toutes les douze heures ; COURS_AUTO=0 les laisse a la main */
   /* ON A SERVER (all blank on the Mac): HOST=0.0.0.0 behind the reverse proxy, PUBLIC_URL the address people
      type (https://alayafinejewelry.com), PUBLIC_SITE=1 to serve the site itself at /, TRUST_PROXY=1 to read
      the visitor's address from X-Forwarded-For. See DEPLOIEMENT.md. */
@@ -98,6 +99,12 @@ if (ENV.ADMIN_EMAIL && ENV.ADMIN_PASSWORD && !userByEmail(ENV.ADMIN_EMAIL)){
 
 /* ---------- les pieces : lues et ecrites dans le site par catalogue.js ---------- */
 var catalogue = require('./catalogue')(cfg);
+/* ---------- la base (7 octobre 2026) : tout ce que le studio tient en propre, data/studio.sqlite ---------- */
+var base = require('./base')(cfg.data);
+cfg.base = base;
+/* une sauvegarde de la base au demarrage, puis chaque jour ; les trente derniers jours gardes */
+function backup(){ try { var f = base.sauvegarde(); if (f) console.log('base sauvegardee : ' + f); } catch (e){ console.log('sauvegarde de la base refusee : ' + e.message); } }
+setTimeout(backup, 3000); setInterval(backup, 86400000).unref();
 
 /* ---------- serving ---------- */
 var MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8',
@@ -166,9 +173,9 @@ var DENY = /\.(command|sh|conf|md|docx|zip|key|log|tmp)$|\.bak/i;
    A module may also export open(req, res, u): the routes that need NO session (a visitor of the site, a mail
    client, Stripe). It is called first on every request, before the door; it returns true (or a promise) when
    the route is its own. cfg.publicUrl is the public address when the studio runs on a server, '' on the Mac. ---------- */
-var MODULES = ['textes', 'atelier', 'mailing', 'vente', 'publier'].map(function(n){
+var MODULES = ['textes', 'atelier', 'mailing', 'vente', 'commerce', 'publier'].map(function(n){
   var f = path.join(ROOT, n + '.js');
-  return fs.existsSync(f) ? require(f)(cfg, { send: send, fail: fail, readJSONBody: readJSONBody, audit: audit, readJSON: readJSON, writeAtomic: writeAtomic, now: now, txt: txt, serveFile: serveFile, catalogue: catalogue, readRaw: readRaw, ipOf: ipOf }) : null;
+  return fs.existsSync(f) ? require(f)(cfg, { send: send, fail: fail, readJSONBody: readJSONBody, audit: audit, readJSON: readJSON, writeAtomic: writeAtomic, now: now, txt: txt, serveFile: serveFile, catalogue: catalogue, readRaw: readRaw, ipOf: ipOf, base: base, users: users }) : null;
 }).filter(Boolean);
 
 function api(req, res, u, user){
@@ -192,6 +199,12 @@ function api(req, res, u, user){
   if (p === '/pieces' && req.method === 'GET') return send(res, 200, { pieces: catalogue.all(), vocab: catalogue.vocab(), last: catalogue.lastSave() });
   /* ACCOUNTS: a login is a first name or an email; an admin creates, changes a role or a password, removes.
      Nobody removes or demotes the last admin, nor removes the account they are signed in with. */
+  /* 10 octobre : my own account : my name and my password (the current one asked), whatever my role */
+  if (p === '/moi' && req.method === 'PUT'){ return readJSONBody(req).then(function(b){
+    var list = users(), me = list.filter(function(x){ return x.email.toLowerCase() === user.email.toLowerCase(); })[0]; if (!me) return fail(res, 404, 'compte inconnu');
+    if (b.password !== undefined){ if (!checkPassword(me, txt(b.current))) return fail(res, 403, 'le mot de passe actuel ne correspond pas'); if (txt(b.password).length < 10) return fail(res, 400, 'dix caract\u00e8res au moins'); me.salt = b64u(crypto.randomBytes(16)); me.hash = hashPassword(b.password, me.salt); }
+    if (typeof b.name === 'string' && b.name.trim()) me.name = b.name.trim();
+    var f = path.join(cfg.data, 'users.json'); writeAtomic(f, JSON.stringify(list, null, 2) + '\n'); fs.chmodSync(f, 0o600); audit(user, 'moi-update', { password: b.password !== undefined, name: !!b.name }); send(res, 200, { email: me.email, name: me.name, role: me.role }); }); }
   var acc = /^\/users(?:\/([^\/]+))?$/.exec(p);
   if (acc){
     if (user.role !== 'admin') return fail(res, 403, 'not allowed');
@@ -229,6 +242,10 @@ function api(req, res, u, user){
   /* what follows writes in the site: admins only. A refusal of the catalogue (a name missing, an address taken) is a 400 with its sentence. */
   var m, refuse = function(e){ fail(res, 400, e.message); };
   if (user.role !== 'admin') return fail(res, 403, 'not allowed');
+  if (p === '/collections' && req.method === 'POST'){
+    if (user.role !== 'admin') return fail(res, 403, 'not allowed');
+    return readJSONBody(req).then(function(b){ var r; try { r = catalogue.addCollection(txt(b.name)); } catch (e){ return fail(res, 400, e.message); } audit(user, 'collection-add', { reference: r.slug }); send(res, 201, r); });
+  }
   if (p === '/pieces' && req.method === 'POST'){
     /* the photos travel in the body as data URLs: twelve photos of a few megabytes */
     return readJSONBody(req, 90 * 1048576).then(function(b){
@@ -296,7 +313,7 @@ http.createServer(function(req, res){
   if (pth.indexOf('/studio/') === 0){
     var rel = pth.slice('/studio/'.length) || 'index.html';
     if (rel === 'login') rel = 'login.html';
-    var open = rel === 'login.html' || rel === 'studio.css' || rel === 'logo.png';
+    var open = rel === 'login.html' || rel === 'studio.css' || rel === 'systeme.css' || rel === 'logo.png';
     if (!user && !open){
       if (/\.html$/.test(rel)){ res.writeHead(302, { Location: 'login' }); return res.end(); }
       return fail(res, 401, 'not signed in');

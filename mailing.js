@@ -2,14 +2,14 @@
    LE MAILING, derriere la famille Mailing du studio (4 octobre 2026).
    Sur le modele de la newsletter du studio Instinct (server/newsletter.js).
 
-   Tout vit dans DATA_DIR/mailing/ :
-     contacts.json    la liste de la maison : [{ email, name, addedAt }]
-     store.json       le store du moteur : envois, destinataires, desinscrits
-                      (newsletter_engine.mjs, le moteur d'Instinct, copie tel quel)
-     settings.json    la boite d'envoi : adresse, serveur, port, nom affiche
-     pass             le mot de passe de la boite, seul dans son fichier (600),
-                      jamais rendu par aucune route
-     draft.json       le brouillon en cours
+   Tout vit dans la base (base.js, data/studio.sqlite) depuis le 7 octobre 2026 :
+     contacts         la liste de la maison (email, nom, source, note)
+     campagnes, destinataires, evenements, suppressions, jetons : le store du
+                      moteur (newsletter_engine.mjs, le moteur d'Instinct), sur SQL
+     reglages mailing la boite d'envoi : adresse, serveur, port, nom affiche
+     reglages mailing_draft  le brouillon en cours
+   Un seul fichier reste a part : DATA_DIR/mailing/pass, le mot de passe de la boite,
+   seul dans son fichier (600), jamais rendu par aucune route.
 
    Ce qui est repris du moteur d'Instinct : le store, l'assemblage MIME, la version
    texte, les compteurs. Ce qui n'en est PAS repris : le suivi (pixel, liens
@@ -28,8 +28,7 @@ var fs = require('fs'), path = require('path'), crypto = require('crypto');
 module.exports = function(cfg, T){
   var dir = path.join(cfg.data, 'mailing');
   fs.mkdirSync(dir, { recursive: true });
-  var contactsFile = path.join(dir, 'contacts.json'), settingsFile = path.join(dir, 'settings.json'), passFile = path.join(dir, 'pass'),
-      draftFile = path.join(dir, 'draft.json'), storeFile = path.join(dir, 'store.json');
+  var passFile = path.join(dir, 'pass'), B = cfg.base || T.base;
   var ORIGIN = 'https://alayafinejewelry.com', DAILY_CAP = +process.env.MAILING_DAILY_CAP || 1800, PAUSE_MS = process.env.MAILING_PAUSE_MS === undefined ? 1000 : +process.env.MAILING_PAUSE_MS;
   var VALID = /^[^\s@<>,;:"\\]+@[^\s@<>,;:"\\]+\.[^\s@<>,;:"\\]{2,}$/;
 
@@ -44,11 +43,11 @@ module.exports = function(cfg, T){
     var n = crypto.randomBytes(48).toString('base64url'); fs.writeFileSync(secretFile, n + '\n', { mode: 0o600 }); fs.chmodSync(secretFile, 0o600); return n;
   }
   var engine = import('./newsletter_engine.mjs');   /* the module, once */
-  var store = engine.then(function(m){ return m.createJsonStore(storeFile); });
+  var store = Promise.resolve(B.mailStore);   /* the engine's store, on the base */
 
   /* ---------- the sender box ---------- */
   function settings(){
-    var s = T.readJSON(settingsFile, {}), pass = ''; try { pass = fs.readFileSync(passFile, 'utf8').trim(); } catch (e){}
+    var s = B.reglages.get('mailing', {}), pass = ''; try { pass = fs.readFileSync(passFile, 'utf8').trim(); } catch (e){}
     return { user: T.txt(s.user).trim().toLowerCase(), host: T.txt(s.host).trim() || 'smtp.gmail.com', port: +s.port || 587, name: T.txt(s.name).trim() || 'Alaya Fine Jewelry', pass: pass,
              imapHost: T.txt(s.imapHost).trim() || (T.txt(s.host).trim() || 'smtp.gmail.com').replace(/^smtp[.-]/, 'imap.'), imapPort: +s.imapPort || 993 };
   }
@@ -64,8 +63,7 @@ module.exports = function(cfg, T){
   }
 
   /* ---------- the contacts ---------- */
-  function contacts(){ var l = T.readJSON(contactsFile, []); return Array.isArray(l) ? l : []; }
-  function saveContacts(l){ T.writeAtomic(contactsFile, JSON.stringify(l, null, 2) + '\n'); }
+  function contacts(){ return B.contacts.list(); }
   /* people out of anything pasted or out of a CSV: one per line, the address wherever it sits on
      the line. The line is cut in cells the way a CSV is ("Martin, Claire" is one cell); the name is
      "Name <a@b>" or the first other cell that reads like a name. A line without an address is counted. */
@@ -97,11 +95,9 @@ module.exports = function(cfg, T){
     out.ignored = ignored; out.twice = twice;
     return out;
   }
-  function addContacts(text){
-    var list = contacts(), have = {}, added = [], people = parsePeople(text), already = people.twice;
-    list.forEach(function(c){ have[c.email] = 1; });
-    people.forEach(function(p){ if (have[p.email]){ already++; return; } have[p.email] = 1; added.push(p.email); list.push({ email: p.email, name: p.name, addedAt: T.now() }); });
-    if (added.length) saveContacts(list);
+  function addContacts(text, source){
+    var added = [], people = parsePeople(text), already = people.twice;
+    B.tx(function(){ people.forEach(function(p){ if (B.contacts.add({ email: p.email, name: p.name, source: source || 'studio', addedAt: T.now() })) added.push(p.email); else already++; }); });
     return { added: added.length, already: already, ignored: people.ignored, emails: added };
   }
 
@@ -150,7 +146,8 @@ module.exports = function(cfg, T){
         '<a href="' + url + '" style="' + SANS + ';font-size:10px;letter-spacing:.18em;text-transform:uppercase;font-weight:600;color:#111;text-decoration:underline">D\u00e9couvrir</a></td>';
     };
     var rows = '';
-    for (var i = 0; i < list.length; i += 2) rows += '<tr>' + cell(list[i]) + (list[i + 1] ? cell(list[i + 1]) : '<td width="50%"></td>') + '</tr>';
+    /* 10 octobre : a lone piece (the only one, or the last of an odd list) takes the whole row and sits centred */
+    for (var i = 0; i < list.length; i += 2) rows += '<tr>' + (list[i + 1] ? cell(list[i]) + cell(list[i + 1]) : cell(list[i]).replace('<td width="50%"', '<td colspan="2" width="100%"')) + '</tr>';
     return '<tr><td class="pad" style="padding:14px 30px 4px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">' + rows + '</table></td></tr>';
   }
   function unsubscribeLink(){ var s = settings(); return 'mailto:' + (s.user || 'contact@alayafinejewelry.com') + '?subject=' + encodeURIComponent('D\u00e9sinscription'); }
@@ -230,7 +227,7 @@ module.exports = function(cfg, T){
         var list = contacts();
         return Promise.all(y[1].map(function(c){ return M.campaignStats(st, c.id).then(function(stats){ return { id: c.id, subject: c.subject, createdAt: c.createdAt, createdBy: c.createdBy || '', status: c.status, tracked: !!c.tracked, stats: stats }; }); })).then(function(camps){
           return { sender: s, contacts: list, suppressions: y[0], reach: list.filter(function(c){ return !out[c.email]; }).length, remaining: Math.max(0, DAILY_CAP - y[2]),
-                   campaigns: camps, draining: draining, cap: DAILY_CAP, tracking: !!TRACK, publicUrl: PUBLIC, draft: T.readJSON(draftFile, { subject: '', contenu: '', pieces: [] }), origin: ORIGIN };
+                   campaigns: camps, draining: draining, cap: DAILY_CAP, tracking: !!TRACK, publicUrl: PUBLIC, draft: B.reglages.get('mailing_draft', { subject: '', contenu: '', pieces: [] }), origin: ORIGIN };
         });
       });
     });
@@ -385,8 +382,12 @@ module.exports = function(cfg, T){
       }); });
     if (p === '/mailing/contacts' && req.method === 'DELETE'){
       var e = T.txt(u.searchParams.get('email')).trim().toLowerCase();
-      saveContacts(contacts().filter(function(c){ return c.email !== e; })); T.audit(user, 'mailing-contact-removed', { email: e }); return T.send(res, 200, { ok: true }), true;
+      B.contacts.remove(e); T.audit(user, 'mailing-contact-removed', { email: e }); return T.send(res, 200, { ok: true }), true;
     }
+    /* a contact's name or note, typed on its sheet */
+    if (p === '/mailing/contacts' && req.method === 'PUT') return body(function(b){
+      var e1 = T.txt(b.email).trim().toLowerCase(); if (!B.contacts.has(e1)) return T.fail(res, 404, 'contact inconnu');
+      B.contacts.patch(e1, { name: typeof b.name === 'string' ? b.name.trim().slice(0, 120) : undefined, note: typeof b.note === 'string' ? b.note.trim().slice(0, 2000) : undefined }); T.send(res, 200, { ok: true }); });
     if (p === '/mailing/suppressions' && req.method === 'POST') return body(function(b){
       var e2 = T.txt(b.email).trim().toLowerCase(); if (!VALID.test(e2)) return T.fail(res, 400, 'adresse invalide');
       return store.then(function(st){ return st.addSuppression(e2, 'manual'); }).then(function(){ T.audit(user, 'mailing-unsubscribed', { email: e2 }); T.send(res, 200, { ok: true }); }); });
@@ -395,7 +396,7 @@ module.exports = function(cfg, T){
 
     if (p === '/mailing/draft' && req.method === 'PUT') return body(function(b){
       var d = { subject: T.txt(b.subject).slice(0, 300), contenu: T.txt(b.contenu).slice(0, 400000), pieces: (Array.isArray(b.pieces) ? b.pieces : []).map(String).slice(0, 12), updatedAt: T.now(), by: user.email };
-      T.writeAtomic(draftFile, JSON.stringify(d, null, 2) + '\n'); T.send(res, 200, d); });
+      B.reglages.set('mailing_draft', d); T.send(res, 200, d); });
     if (p === '/mailing/preview' && req.method === 'POST') return T.readJSONBody(req, 2 * 1048576).then(function(b){ T.send(res, 200, { html: htmlOf(b) }); })['catch'](oops);
 
     if (p === '/mailing/test' && req.method === 'POST') return body(function(b){
@@ -443,14 +444,14 @@ module.exports = function(cfg, T){
       }); })['catch'](oops);
 
     if (p === '/mailing/settings' && req.method === 'POST') return body(function(b){
-      var s = T.readJSON(settingsFile, {});
+      var s = B.reglages.get('mailing', {});
       if (b.user !== undefined){ var us = T.txt(b.user).trim().toLowerCase(); if (us && !VALID.test(us)) return T.fail(res, 400, 'l\u2019adresse de la bo\u00eete n\u2019est pas une adresse'); s.user = us; }
       if (b.host !== undefined) s.host = T.txt(b.host).trim().slice(0, 200);
       if (b.port !== undefined) s.port = +b.port || 587;
       if (b.name !== undefined) s.name = T.txt(b.name).replace(/[\r\n]+/g, ' ').trim().slice(0, 120);
       if (b.imapHost !== undefined) s.imapHost = T.txt(b.imapHost).trim().slice(0, 200);
       if (b.imapPort !== undefined) s.imapPort = +b.imapPort || 993;
-      T.writeAtomic(settingsFile, JSON.stringify(s, null, 2) + '\n');
+      B.reglages.set('mailing', s);
       if (T.txt(b.pass).trim()){ fs.writeFileSync(passFile, T.txt(b.pass).trim() + '\n', { mode: 0o600 }); fs.chmodSync(passFile, 0o600); }
       T.audit(user, 'mailing-settings', { user: s.user, host: s.host, password: !!T.txt(b.pass).trim() });
       T.send(res, 200, publicSettings());

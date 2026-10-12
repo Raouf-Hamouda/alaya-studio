@@ -6,16 +6,18 @@
    (les champs fullName, address, vatNumber, taxCode, ibanNumber, bicOrSwiftCode
    de son compte utilisateur), ici "Maison".
 
-   Pas de base : un fichier JSON par objet dans data/atelier/. Son export Mongo
-   (src/scripts/database/*.json) est vide, rien a importer.
+   La base : chaque objet est une ligne de la table objets de data/studio.sqlite
+   (base.js), ses champs en JSON, son numero unique par la base. Ce qui est supprime
+   garde sa ligne (deleted_at) : les archives. Les fichiers JSON d'avant sont importes
+   une fois au premier lancement.
 
    UNE SEULE DESCRIPTION DES CHAMPS (TYPES) : elle nettoie ce qui arrive, elle est
    envoyee au studio qui dessine les formulaires avec, et elle ecrit le document. */
 'use strict';
-var fs = require('fs'), path = require('path');
+var fs = require('fs'), path = require('path'), os = require('os');
 
 module.exports = function(cfg, tools){
-  var DIR = path.join(cfg.data, 'atelier'), IMG = path.join(DIR, 'images');
+  var DIR = path.join(cfg.data, 'atelier'), IMG = path.join(DIR, 'images'), B = tools.base || require('./base')(':memory:');
   fs.mkdirSync(IMG, { recursive: true });
 
   /* ---------- his lists (alaya-frontend/src/pages/production/certificates/constant.js) ---------- */
@@ -53,8 +55,8 @@ module.exports = function(cfg, tools){
                ['Les textes', [['additionalInfos', 'Informations complémentaires', 'area'], ['description', 'Commentaires', 'area']]]] },
     'devis': { file: 'devis', prefix: 'DEV', one: 'Devis', name: 'customerName', money: true, list: [['customerName', 'Client'], ['clientType', 'Type'], ['date', 'Date'], ['checked', 'Vérifié']],
       groups: [['Le client', [['customerName', 'Nom du client'], ['address', 'Adresse', 'area'], ['phoneNumber', 'Téléphone'], ['fiscalCode', 'Code fiscal'], ['clientType', 'Type de client', 'radio', [['particular', 'Particulier'], ['professional', 'Professionnel']]]]],
-               ['Le devis', [['lang', 'Langue du document', 'radio', [['it', 'Italiano'], ['fr', 'Français'], ['en', 'English']]], ['date', 'Date du devis', 'date'], ['gainPercentage', 'Marge (%)', 'number'], ['checked', 'Vérifié', 'check']]],
-               ['Les lignes', [['items', 'Lignes', 'items', [['name', 'Désignation'], ['price', 'Prix (€)', 'number'], ['quantity', 'Quantité', 'number']]]]]] },
+               ['Le devis', [['lang', 'Langue du document', 'radio', [['it', 'Italiano'], ['fr', 'Français'], ['en', 'English']]], ['date', 'Date du devis', 'date'], ['gainPercentage', 'Marge (%)', 'number'], ['validityDays', 'Validité (jours)', 'number'], ['depositPercent', 'Acompte (%)', 'number'], ['leadTime', 'Délai de réalisation'], ['terms', 'Conditions particulières', 'area'], ['checked', 'Vérifié', 'check']]],
+               ['Les lignes', [['items', 'Lignes', 'items', [['name', 'Désignation'], ['description', 'Détail : métal, pierres, taille', 'area'], ['price', 'Prix (€)', 'number'], ['quantity', 'Quantité', 'number']]]]]] },
     /* chez lui une facture se tire d'un devis et le garde tel quel (quote) ; seuls le classement, la date et la verification lui appartiennent */
     'factures': { file: 'factures', prefix: 'FAC', one: 'Facture', name: 'customerName', money: true, fromQuote: true, list: [['customerName', 'Client'], ['quoteReference', 'Devis'], ['filed', 'Classée'], ['date', 'Date'], ['checked', 'Vérifiée']],
       groups: [['La facture', [['lang', 'Langue du document', 'radio', [['it', 'Italiano'], ['fr', 'Français'], ['en', 'English']]], ['date', 'Date de la facture', 'date'], ['filed', 'Classée', 'check'], ['checked', 'Vérifiée', 'check']]]] },
@@ -65,13 +67,12 @@ module.exports = function(cfg, tools){
                ['Le transport', [['vehicleLicense', 'Plaque du véhicule'], ['deliveryDriver', 'Le conducteur ou le cessionnaire']]]] }
   };
   /* the house as it signs its documents. Nothing is known in advance: every line is empty until typed, and an empty line is not printed. */
-  var MAISON = [['fullName', 'Nom ou raison sociale'], ['address', 'Adresse', 'area'], ['vatNumber', 'Numéro de TVA'], ['taxCode', 'Code fiscal ou SIRET'], ['bankName', 'Banque'], ['ibanNumber', 'IBAN'], ['bicOrSwiftCode', 'BIC / SWIFT'], ['mentions', 'Mentions au pied des devis et factures', 'area']];
+  var MAISON = [['fullName', 'Nom ou raison sociale'], ['address', 'Adresse', 'area'], ['vatNumber', 'Numéro de TVA'], ['taxCode', 'Code fiscal ou SIRET'], ['bankName', 'Banque'], ['ibanNumber', 'IBAN'], ['bicOrSwiftCode', 'BIC / SWIFT'], ['vatRate', 'TVA sur les devis et factures (%), vide = prix sans TVA'], ['quoteValidity', 'Validité des devis (jours), 30 si vide'], ['quoteDeposit', 'Acompte à la commande (%), vide = pas d’acompte'], ['quoteTerms', 'Conditions imprimées sur chaque devis', 'area'], ['mentions', 'Mentions au pied des devis et factures', 'area']];
 
-  /* ---------- the store ---------- */
-  function fileOf(name){ return path.join(DIR, name + '.json'); }
-  function load(type){ return tools.readJSON(fileOf(TYPES[type].file), []); }
-  function save(type, list){ tools.writeAtomic(fileOf(TYPES[type].file), JSON.stringify(list, null, 1) + '\n'); }
-  function maison(){ return tools.readJSON(fileOf('maison'), {}); }
+  /* ---------- the store: the base ---------- */
+  function load(type){ return B.objets.list(type); }
+  function save(type, list){ B.objets.putAll(type, list); }
+  function maison(){ return B.reglages.get('maison', {}); }
   function fieldsOf(type){ return TYPES[type].groups.reduce(function(a, g){ return a.concat(g[1]); }, []); }
 
   /* ---------- what arrives is cleaned by the description, field by field ---------- */
@@ -83,6 +84,7 @@ module.exports = function(cfg, tools){
     if (kind === 'radio') return f[3].some(function(o){ return o[0] === v; }) ? v : f[3][0][0];
     if (kind === 'vendor' || kind === 'production'){ var kid = tools.txt(v); return load(kind === 'vendor' ? 'vendors' : 'productions').some(function(r){ return r.id === kid; }) ? kid : ''; }
     if (kind === 'hidden') return tools.txt(v).slice(0, 60);
+    if (kind === 'piece'){ var ps = tools.txt(v).trim(); return ps && tools.catalogue.all().some(function(x){ return x.slug === ps; }) ? ps : ''; }
     /* a line keeps what the form does not show (the production it came from, the gold price of that day) */
     if (kind === 'items') return (Array.isArray(v) ? v : []).slice(0, 200).map(function(row){ var o = {}; f[3].forEach(function(s){ if (s[2] !== 'calc') o[s[0]] = cleanValue(s, row ? row[s[0]] : ''); });
         if (f[0] === 'items' && row && row.productId){ o.productId = cleanValue(['', '', 'production'], row.productId); if (row.product && typeof row.product === 'object') o.product = row.product; o.goldValue = cleanValue(['', '', 'number'], row.goldValue); }
@@ -115,14 +117,14 @@ module.exports = function(cfg, tools){
   }
   function nextNumber(list){ return String(list.reduce(function(m, r){ return Math.max(m, parseInt(r.number, 10) || 0); }, 0) + 1); }
   /* a number is never given twice: what was deleted still counts */
-  function everHad(type, list){ return list.concat(tools.readJSON(fileOf(TYPES[type].file + '.corbeille'), [])); }
+  function everHad(type, list){ return list.concat(B.objets.trashed(type)); }
   function newId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
   /* ---------- money, the way his quote counts: quantity x price, the margin on top ---------- */
   /* a line drawn from a production is priced his way (optimizedPrice): the production's cost at the gold price kept on the line, the margin on top */
   function lines(q){ var g = 1 + (Number(q.gainPercentage) || 0) / 100; return (q.items || []).map(function(it){
     var qty = Number(it.quantity) || 0, unit = it.product ? G.optimizedPrice(Number(q.gainPercentage) || 0, it.product, it.goldValue === '' || it.goldValue === undefined ? G.goldNow() : it.goldValue, Number(it.price) || 0) : (Number(it.price) || 0) * g;
-    var amount = Math.round(qty * unit * 100) / 100; return { name: it.name, quantity: qty, unit: qty ? Math.round(amount / qty * 100) / 100 : 0, amount: amount }; }); }
+    var amount = Math.round(qty * unit * 100) / 100; return { name: it.name, description: it.description || '', quantity: qty, unit: qty ? Math.round(amount / qty * 100) / 100 : 0, amount: amount, thumb: thumb(it) }; }); }
   function total(q){ return Math.round(lines(q).reduce(function(s, l){ return s + l.amount; }, 0) * 100) / 100; }
 
   /* ---------- the QR code, as his reports carry one (qrcode, errorCorrectionLevel M). No library:
@@ -209,7 +211,7 @@ module.exports = function(cfg, tools){
       description: 'Description', type: 'Type of Jewel', material: 'Description of Material', t_weight: 'Total Weight of Jewel', t_stones: 'Total Amount of Stones', t_diamonds: 'Total Weight of Diamonds', t_gems: 'Total Weight of Gems', setting: 'Setting',
       diamonds: 'Diamonds', gems: 'Gems', n_diamonds: 'diamond(s)', n_gems: 'gem(s)', approx_total: 'total approx.', shapes: 'Shapes', colors: 'Colors', species_pl: 'Species', varieties: 'Varieties', colour_j: 'Colour Grade',
       t_colour: 'Colour Grades for Set Diamonds', t_clarity: 'Clarity Grades for Set Diamonds', check: 'Report Check', check_line: 'Check your jewelry report online at', jewel_foot: 'This report describes the jewel as examined at the atelier. It is not a guarantee or valuation.',
-      quote: 'Quote', invoice: 'Invoice', from: 'From', client: 'Client', fiscal: 'Tax code', vat: 'VAT', designation: 'Description', qty: 'Quantity', unit: 'Unit price', amount: 'Amount', total: 'Total', pay: 'Payment by bank transfer', bank: 'Bank', of_quote: 'Quote',
+      quote: 'Quote', invoice: 'Invoice', from: 'From', client: 'Client', fiscal: 'Tax code', vat: 'VAT', designation: 'Description', qty: 'Quantity', unit: 'Unit price', amount: 'Amount', total: 'Total', pay: 'Payment by bank transfer', bank: 'Bank', of_quote: 'Quote', date_l: 'Date', validity: 'Valid until', subtotal: 'Subtotal, excl. VAT', vat_line: 'VAT', total_ttc: 'Total, incl. VAT', deposit: 'Deposit on order', balance: 'Balance on delivery', lead: 'Lead time', terms: 'Terms', accept: 'Agreed and accepted', accept_note: 'Date and signature of the client, preceded by the words “agreed and accepted”.', house_sign: 'For', page: 'Page',
       delivery: 'Delivery note', transferor: 'Transferor', assignee: 'Assignee', place: 'Place of delivery', goods: 'Description of the goods (nature and quality)', delivered: 'Delivered', returned: 'Returned', replaced: 'Replaced', plate: 'Vehicle license plate', driver: 'The driver or the transferee', taxcode: 'Tax code', ddt: 'Transport document', sender: 'Sender', recipient: 'Recipient', destination: 'Place of destination', reason: 'Transport reason', order: 'Your order', of: 'of', in_conto: 'On account', a_saldo: 'In settlement', importo: 'Amount', appearance: 'External appearance of the goods', packages: 'No. packages', weightkg: 'Weight kg', port: 'Port', pickup: 'Date and time of pick-up', notes: 'Annotations - Variations', sign_driver: 'Driver’s signature', sign_recipient: 'Recipient’s signature', by: 'By', delivery_by: 'Delivery' },
     fr: { locale: 'fr-FR', dec: ',', k_diamond: 'Rapport de diamant', k_gem: 'Rapport d’identification', k_jewel: 'Rapport de bijou', ident: 'Identification', report_number: 'Numéro du rapport', nature: 'Nature', natural: 'Naturel', lab: 'De laboratoire',
       shape_cut: 'Forme et taille', measurements: 'Dimensions', grading: 'Résultats de gradation', carat: 'Poids en carats', colour: 'Couleur', clarity: 'Pureté', cut: 'Taille', add_grading: 'Informations complémentaires',
@@ -219,7 +221,7 @@ module.exports = function(cfg, tools){
       description: 'Description', type: 'Type de bijou', material: 'Description de la matière', t_weight: 'Poids total du bijou', t_stones: 'Nombre total de pierres', t_diamonds: 'Poids total des diamants', t_gems: 'Poids total des gemmes', setting: 'Serti',
       diamonds: 'Diamants', gems: 'Gemmes', n_diamonds: 'diamant(s)', n_gems: 'gemme(s)', approx_total: 'total env.', shapes: 'Formes', colors: 'Couleurs', species_pl: 'Espèces', varieties: 'Variétés', colour_j: 'Couleur',
       t_colour: 'Couleur des diamants sertis', t_clarity: 'Pureté des diamants sertis', check: 'Vérification du rapport', check_line: 'Vérifiez votre rapport en ligne sur', jewel_foot: 'Ce rapport décrit le bijou tel qu’il a été examiné à l’atelier. Il n’est ni une garantie ni une estimation de valeur.',
-      quote: 'Devis', invoice: 'Facture', from: 'Émetteur', client: 'Client', fiscal: 'Code fiscal', vat: 'TVA', designation: 'Désignation', qty: 'Quantité', unit: 'Prix unitaire', amount: 'Montant', total: 'Total', pay: 'Règlement par virement', bank: 'Banque', of_quote: 'Devis',
+      quote: 'Devis', invoice: 'Facture', from: 'Émetteur', client: 'Client', fiscal: 'Code fiscal', vat: 'TVA', designation: 'Désignation', qty: 'Quantité', unit: 'Prix unitaire', amount: 'Montant', total: 'Total', pay: 'Règlement par virement', bank: 'Banque', of_quote: 'Devis', date_l: 'Date', validity: 'Valable jusqu’au', subtotal: 'Sous-total HT', vat_line: 'TVA', total_ttc: 'Total TTC', deposit: 'Acompte à la commande', balance: 'Solde à la livraison', lead: 'Délai de réalisation', terms: 'Conditions', accept: 'Bon pour accord', accept_note: 'Date et signature du client, précédées de la mention « bon pour accord ».', house_sign: 'Pour', page: 'Page',
       delivery: 'Bon de livraison', transferor: 'Cédant', assignee: 'Cessionnaire', place: 'Lieu de livraison', goods: 'Description des marchandises (nature et qualité)', delivered: 'Livrée', returned: 'Rendue', replaced: 'Remplacée', plate: 'Plaque du véhicule', driver: 'Le conducteur ou le cessionnaire', taxcode: 'Code fiscal', ddt: 'Document de transport', sender: 'Expéditeur', recipient: 'Destinataire', destination: 'Lieu de destination', reason: 'Motif du transport', order: 'Votre commande', of: 'du', in_conto: 'En compte', a_saldo: 'Pour solde', importo: 'Montant', appearance: 'Aspect extérieur des biens', packages: 'Nombre de colis', weightkg: 'Poids kg', port: 'Port', pickup: 'Date et heure de l’enlèvement', notes: 'Annotations, variations', sign_driver: 'Signature du conducteur', sign_recipient: 'Signature du destinataire', by: 'Par', delivery_by: 'Livraison' },
     it: { locale: 'it-IT', dec: ',', k_diamond: 'Rapporto Alaya Fine Jewelry', k_gem: 'Rapporto di identificazione', k_jewel: 'Rapporto del gioiello', ident: 'Identificazione', report_number: 'Numero del rapporto', nature: 'Origine', natural: 'Naturale', lab: 'Di laboratorio',
       shape_cut: 'Forma e stile di taglio', measurements: 'Misure', grading: 'Risultati della classificazione', carat: 'Peso in carati', colour: 'Colore', clarity: 'Purezza', cut: 'Taglio', add_grading: 'Informazioni aggiuntive',
@@ -229,12 +231,12 @@ module.exports = function(cfg, tools){
       description: 'Descrizione', type: 'Tipo di gioiello', material: 'Descrizione del materiale', t_weight: 'Peso totale del gioiello', t_stones: 'Numero totale di pietre', t_diamonds: 'Peso totale dei diamanti', t_gems: 'Peso totale delle gemme', setting: 'Incastonatura',
       diamonds: 'Diamanti', gems: 'Gemme', n_diamonds: 'diamante/i', n_gems: 'gemma/e', approx_total: 'totale circa', shapes: 'Forme', colors: 'Colori', species_pl: 'Specie', varieties: 'Varietà', colour_j: 'Colore',
       t_colour: 'Colore dei diamanti incastonati', t_clarity: 'Purezza dei diamanti incastonati', check: 'Verifica del rapporto', check_line: 'Verifichi il suo rapporto online su', jewel_foot: 'Questo rapporto descrive il gioiello come esaminato in atelier. Non è una garanzia né una valutazione.',
-      quote: 'Preventivo', invoice: 'Fattura', from: 'Emittente', client: 'Cliente', fiscal: 'CF', vat: 'Partita IVA', designation: 'Descrizione prestazioni', qty: 'Quantità', unit: 'Prezzo unitario', amount: 'Importo in €', total: 'Totale', pay: 'Bonifico bancario su IBAN', bank: 'Banca', of_quote: 'Preventivo',
+      quote: 'Preventivo', invoice: 'Fattura', from: 'Emittente', client: 'Cliente', fiscal: 'CF', vat: 'Partita IVA', designation: 'Descrizione prestazioni', qty: 'Quantità', unit: 'Prezzo unitario', amount: 'Importo in €', total: 'Totale', pay: 'Bonifico bancario su IBAN', bank: 'Banca', of_quote: 'Preventivo', date_l: 'Data', validity: 'Valido fino al', subtotal: 'Imponibile', vat_line: 'IVA', total_ttc: 'Totale', deposit: 'Acconto all’ordine', balance: 'Saldo alla consegna', lead: 'Tempi di realizzazione', terms: 'Condizioni', accept: 'Per accettazione', accept_note: 'Data e firma del cliente, precedute dalla dicitura «per accettazione».', house_sign: 'Per', page: 'Pagina',
       delivery: 'Nota di consegna', transferor: 'Mittente', assignee: 'Cessionario', place: 'Luogo di consegna', goods: 'Descrizione dei beni (natura e qualità)', delivered: 'Consegnate', returned: 'Restituite', replaced: 'Sostituite', plate: 'Targa automezzo', driver: 'Il conducente o il cessionario', taxcode: 'Cod. Fisc.', ddt: 'Documento di trasporto (D.d.t.)', sender: 'Mittente', recipient: 'Destinatario', destination: 'Luogo di destinazione', reason: 'Causale del trasporto', order: 'Vs. ordine', of: 'del', in_conto: 'In conto', a_saldo: 'A saldo', importo: 'Importo (*)', appearance: 'Aspetto esteriore dei beni', packages: 'N. colli', weightkg: 'Peso kg', port: 'Porto', pickup: 'Data e ora del ritiro', notes: 'Annotazioni - Variazioni', sign_driver: 'Firma del conducente', sign_recipient: 'Firma del destinatario', by: 'A mezzo', delivery_by: 'Consegna',
       /* his lines, printed only in his language */
       dpr_t: 'D.P.R. 472 del 14-08-1996 - D.P.R. 696 del 21-12-1996', star: '(*) Solo in caso di utilizzo in sostituzione della certificazione fiscale', tentata: 'Tentata vendita', dpr_d: '(D.P.R. 472 del 14-08-1996)', bollo: 'Bollo', bollo_note: '«Bollo sull’originale di 2,00 euro. La marca da bollo va applicata solo qualora gli importi non soggetti ad IVA siano superiori a 77,47 euro»' }
   };
-  var DEFAULT_LANG = { 'cert-diamants': 'en', 'cert-gemmes': 'en', 'cert-bijoux': 'en', 'devis': 'it', 'factures': 'it', 'livraisons': 'it', 'transports': 'it' };
+  var DEFAULT_LANG = { 'cert-diamants': 'en', 'cert-gemmes': 'en', 'cert-bijoux': 'en', 'devis': 'it', 'factures': 'it', 'livraisons': 'it', 'transports': 'it', 'productions': 'fr' };
 
   /* ---------- the document: A4 pages printed from the browser. The head and the foot are the head and
      the foot of a table, so they come back on every page when the document runs over one. ---------- */
@@ -243,7 +245,11 @@ module.exports = function(cfg, tools){
   function rows(list){ return list.filter(function(r){ return r[1] !== '' && r[1] !== undefined && r[1] !== null; }).map(function(r){ return '<div class="row"><span>' + esc(r[0]) + '</span><b>' + esc(r[1]) + '</b></div>'; }).join(''); }
   function block(title, inner){ return inner ? '<section><h3>' + esc(title) + '</h3>' + inner + '</section>' : ''; }
   function text(title, v){ return block(title, v ? '<p class="text">' + nl(v) + '</p>' : ''); }
-  function picture(rec){ var a = tools.txt(rec.avatar), src = a.indexOf('image:') === 0 ? '/api/atelier/image/' + a.slice(6) : (a.indexOf('site:') === 0 ? '/site/' + a.slice(5) : ''); return src ? '<figure class="photo"><img src="' + esc(src) + '" alt=""></figure>' : ''; }
+  /* the image of a record : its own photo, else the photo of the site piece it is linked to (10 octobre, Raouf : "an image of the ring on the documents") */
+  function imageOf(rec){ if (!rec) return ''; var a = tools.txt(rec.avatar); if (a.indexOf('image:') === 0) return '/api/atelier/image/' + a.slice(6); if (a.indexOf('site:') === 0) return '/site/' + a.slice(5);
+    if (rec.slug){ var pc = tools.catalogue.all().filter(function(x){ return x.slug === rec.slug; })[0]; if (pc && pc.image) return '/site/' + pc.image; } return ''; }
+  function picture(rec){ var src = imageOf(rec); return src ? '<figure class="photo"><img src="' + esc(src) + '" alt=""></figure>' : ''; }
+  function thumb(it){ var src = imageOf(it && it.product); return src ? '<img class="thumb" src="' + esc(src) + '" alt="">' : ''; }
   function houseLine(m){ return [m.fullName, tools.txt(m.address).replace(/\n/g, ', ')].filter(Boolean).map(esc).join(' · '); }
   function sum(list, fn){ return Math.round(list.reduce(function(s, x){ return s + (fn(x) || 0); }, 0) * 100) / 100; }
   function uniq(list){ return list.filter(function(v, i, a){ return v !== '' && v !== undefined && a.indexOf(v) === i; }).join(', '); }
@@ -303,8 +309,8 @@ module.exports = function(cfg, tools){
         (ds.length ? '<div class="refs">' + block(w.t_colour, grades) + block(w.t_clarity, clar) + '</div>' : '') + check(r, w) +
         '</div><div class="col">' + block(w.diamonds, diamonds) + block(w.gems, gems) + '</div></div>', foot(m, w.jewel_foot)];
     },
-    'devis': function(r, m, L){ return commercial(L.w.quote, r, r, m, L); },
-    'factures': function(r, m, L){ return commercial(L.w.invoice, r, r.quote || {}, m, L, r.quote && r.quote.reference ? L.w.of_quote + ' ' + r.quote.reference : ''); },
+    'devis': function(r, m, L){ return commercial('devis', L.w.quote, r, r, m, L); },
+    'factures': function(r, m, L){ return commercial('factures', L.w.invoice, r, r.quote || {}, m, L, r.quote && r.quote.reference ? r.quote.reference : ''); },
     'livraisons': function(r, m, L){ var w = L.w;
       var party = function(who){ return [r[who + 'Company'], r[who + 'Branch']].filter(Boolean).map(esc).join(', ') + (r[who + 'Address'] ? '<br>' + nl(r[who + 'Address']) : '') + (r[who + 'VatNumber'] ? '<br>' + esc(w.vat) + ' ' + esc(r[who + 'VatNumber']) : '') + (r[who + 'TaxCode'] ? '<br>' + esc(w.taxcode) + ' ' + esc(r[who + 'TaxCode']) : ''); };
       var q = function(v){ return v === '' || v === undefined ? '' : L.num(v); };
@@ -314,6 +320,28 @@ module.exports = function(cfg, tools){
         (r.deliveryNoteItem || []).map(function(it){ return '<tr><td>' + esc(it.name) + '</td><td class="n">' + q(it.delivered) + '</td><td class="n">' + q(it.returned) + '</td><td class="n">' + q(it.replaced) + '</td></tr>'; }).join('') + '</tbody></table>' +
         '<div class="parties signs"><div><h3>' + esc(w.plate) + '</h3><p>' + esc(r.vehicleLicense || '') + '</p></div><div><h3>' + esc(w.driver) + '</h3><p>' + esc(r.deliveryDriver || '') + '</p><div class="sign"></div></div></div>', foot(m)];
     }
+  };
+  /* ---------- 10 octobre : the production sheet, the document of the atelier for one piece : what it is, what went into it, what it cost, what it sells ---------- */
+  BODY.productions = function(r, m, L){
+    var vendors = {}; load('vendors').forEach(function(v){ vendors[v.id] = v.fullName; }); var who = function(id){ return vendors[id] || ''; };
+    var gold = G.goldNow(), cur = G.round3(G.totalCurrentCost(r, gold, r.fabricationCost)), fac = (function(){ var f = Number(m.sellingPriceFactor); return f > 0 ? f : 3; })();
+    var piece = r.slug ? tools.catalogue.all().filter(function(x){ return x.slug === r.slug; })[0] : null;
+    var cat = [r.parentCategory, r.mainCategory, r.category].filter(Boolean).join(' › ');
+    var tbl = function(title, heads, lines, total){ if (!lines.length) return ''; return '<section class="prodsec"><h3><span>' + esc(title) + '</span>' + (total !== undefined ? '<em>' + L.euros(total) + '</em>' : '') + '</h3><table class="lines small"><thead><tr>' + heads.map(function(h, i){ return '<th' + (i ? ' class="n"' : '') + '>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+      lines.map(function(l){ return '<tr>' + l.map(function(c, i){ return '<td' + (i ? ' class="n"' : '') + '>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></section>'; };
+    var n = function(v, u){ return v === '' || v === undefined || v === null ? '' : L.num(v, u); }, e = function(v){ return v === '' || v === undefined || v === null ? '' : L.euros(v); };
+    var mounts = tbl('Montures', ['Fournisseur', 'Or 18 k (g)', 'Or 24 k (g)', 'Or, € / g', 'Façon', 'Total'], (r.mountsItems || []).map(function(x){ return [who(x.vendor), n(x.weight18k), n(x.weight24k), e(x.price24k), e(x.manufacture), e(x.total2)]; }), r.mountsTotalCost);
+    var dia = tbl('Diamants', ['Fournisseur', 'Lots', 'Carats', '€ / ct', 'Total', 'Principal'], (r.diamondsItems || []).map(function(x){ return [who(x.vendor), x.lots || '', n(x.ct, 'ct'), e(x.xe), e(x.total), x.isMainDiamond ? 'Oui' : '']; }), r.diamondsTotalCost);
+    var gems = tbl('Gemmes', ['Fournisseur', 'Type', 'Lots', 'Carats', '€ / ct', 'Total'], (r.gemsItems || []).map(function(x){ return [who(x.vendor), x.type || '', x.lots || '', n(x.carat, 'ct'), e(x.xe), e(x.total)]; }), r.gemsTotalCost);
+    var sert = tbl('Sertissage', ['Fournisseur', 'Pierres (PT)', '€ / PT', 'CEN', 'Total'], (r.sertissagesItems || []).map(function(x){ return [who(x.vendor), n(x.numeroPt), e(x.xe2), e(x.cen), e(x.total2)]; }), r.sertissagesTotalCost);
+    var serv = tbl('Services internes', ['Fournisseur', 'Service', 'Total'], (r.internalServicesItems || []).map(function(x){ return [who(x.vendor), x.service || '', e(x.total)]; }), r.internalServicesTotalCost);
+    var parts = [['Montures', r.mountsTotalCost], ['Diamants', r.diamondsTotalCost], ['Gemmes', r.gemsTotalCost], ['Sertissage', r.sertissagesTotalCost], ['Services internes', r.internalServicesTotalCost]].filter(function(x){ return Number(x[1]) > 0; });
+    var totals = '<div class="prodkpi"><div><span>Coût de fabrication</span><b>' + L.euros(r.fabricationCost || 0) + '</b><small>' + parts.map(function(x){ return esc(x[0]) + ' ' + L.euros(x[1]); }).join(' · ') + '</small></div>' +
+      '<div><span>Coût actuel</span><b>' + L.euros(cur) + '</b><small>or à ' + L.euros(gold) + ' le gramme</small></div>' +
+      '<div><span>Prix de vente</span><b>' + L.euros(G.round3(cur * fac)) + '</b><small>coefficient ' + L.num(fac) + '</small></div></div>';
+    var head = '<header class="dhead"><img class="logo" src="/studio/logo.png" alt="Alaya Fine Jewelry"><div class="dtitle"><p class="kind">Fiche de production</p><h1>N° ' + esc(r.reference) + '</h1><div class="meta"><p><span>Date</span><b>' + esc(L.day(tools.txt(r.createdAt).slice(0, 10))) + '</b></p>' + (r.checked ? '<p><span>Vérifiée</span><b>Oui</b></p>' : '') + '</div></div></header>';
+    var ident = '<div class="prodhead">' + (picture(r) || '') + '<div class="prodid"><h2>' + esc(r.productName || 'Sans nom') + '</h2>' + rows([['Catégorie', cat], ['Pièce du site', piece ? piece.name : ''], ['Quantité à l’atelier', n(r.productQuantity)], ['Pierres au total (PT)', n(sum(r.sertissagesItems || [], function(x){ return Number(x.numeroPt) || 0; }) || '')], ['Or 18 k au total', n(G.round3(sum(r.mountsItems || [], function(x){ return Number(x.weight18k) || 0; })) || '', 'g')]]) + (r.description ? '<p class="text">' + nl(r.description) + '</p>' : '') + '</div></div>';
+    return [head, ident + totals + mounts + dia + gems + sert + serv, foot(m)];
   };
   BODY.transports = function(r, m, L){ var w = L.w, box = function(on){ return '<i class="box' + (on ? ' on' : '') + '"></i>'; };
     var side = function(who){ return [r[who + 'Company'], r[who + 'Branch']].filter(Boolean).map(esc).join(', ') + (r[who + 'Address'] ? '<br>' + nl(r[who + 'Address']) : '') + (r[who + 'TaxCode'] ? '<br>' + esc(w.taxcode) + ' ' + esc(r[who + 'TaxCode']) : '') + (r[who + 'VatNumber'] ? '<br>' + esc(w.vat) + ' ' + esc(r[who + 'VatNumber']) : ''); };
@@ -327,19 +355,37 @@ module.exports = function(cfg, tools){
       '<section class="facts two">' + rows([[w.appearance, r.goodsAppearance], [w.packages, L.num(r.numberOfPackage)], [w.weightkg, L.num(r.weight)], [w.port, r.port], [w.pickup, r.pickupDate], [w.notes, r.annotationOrVariations]]) + '<div class="row"><span>' + esc(w.delivery_by) + '</span><b>' + pair + '</b></div></section>' +
       '<div class="parties signs"><div><h3>' + esc(w.sign_driver) + '</h3><div class="sign"></div></div><div><h3>' + esc(w.sign_recipient) + '</h3><div class="sign"></div></div></div>' + (w.star ? '<p class="mentions">' + esc(w.star) + '</p>' : ''), foot(m)];
   };
-  function commercial(title, r, q, m, L, note){ var w = L.w, ls = lines(q);
+  function addDays(d, n){ var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ''); return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n)).toISOString().slice(0, 10) : ''; }
+  function pct(v){ var n = Number(String(v === undefined || v === null ? '' : v).replace(',', '.')); return n > 0 ? n : 0; }
+  /* the money of a devis or a facture: the lines (the margin is inside them), the VAT of the house when it has one, the deposit of a devis */
+  function totals(q, m, r){
+    var ht = total(q), rate = pct((m || {}).vatRate), tva = Math.round(ht * rate) / 100, ttc = Math.round((ht + tva) * 100) / 100;
+    var dep = r && r.depositPercent !== '' && r.depositPercent !== undefined && r.depositPercent !== null ? pct(r.depositPercent) : pct((m || {}).quoteDeposit), acompte = Math.round(ttc * dep) / 100;
+    return { ht: ht, rate: rate, tva: tva, ttc: ttc, depositPercent: dep, acompte: acompte, solde: Math.round((ttc - acompte) * 100) / 100 };
+  }
+  /* the devis and the facture: the number as the title, the dates, the two parties, the lines with their detail, the totals (VAT and deposit when the house says so),
+     the terms beside the bank, and on a devis the two signature boxes */
+  function commercial(kind, title, r, q, m, L, note){ var w = L.w, ls = lines(q), isQuote = kind === 'devis', T = totals(q, m, isQuote ? r : null);
     var house = [m.fullName ? '<b>' + esc(m.fullName) + '</b>' : '', m.address ? nl(m.address) : '', m.vatNumber ? esc(w.vat) + ' ' + esc(m.vatNumber) : '', m.taxCode ? esc(m.taxCode) : ''].filter(Boolean).join('<br>');
     var client = ['<b>' + esc(q.customerName || '') + '</b>', q.address ? nl(q.address) : '', esc(q.phoneNumber || ''), q.fiscalCode ? esc(w.fiscal) + ' ' + esc(q.fiscalCode) : ''].filter(Boolean).join('<br>');
+    var days = pct(r.validityDays) || pct(m.quoteValidity) || 30, until = isQuote ? L.day(addDays(r.date, days)) : '';
+    var meta = [[w.date_l, L.day(r.date)], [w.validity, until], [w.of_quote, note || '']].filter(function(x){ return x[1]; }).map(function(x){ return '<p><span>' + esc(x[0]) + '</span><b>' + esc(x[1]) + '</b></p>'; }).join('');
+    var head = '<header class="dhead"><img class="logo" src="/studio/logo.png" alt="Alaya Fine Jewelry"><div class="dtitle"><p class="kind">' + esc(title) + '</p><h1>' + esc(r.reference) + '</h1><div class="meta">' + meta + '</div></div></header>';
+    var table = '<table class="lines"><thead><tr><th>' + esc(w.designation) + '</th><th class="n">' + esc(w.qty) + '</th><th class="n">' + esc(w.unit) + '</th><th class="n">' + esc(w.amount) + '</th></tr></thead><tbody>' +
+      ls.map(function(l){ return '<tr><td><div class="withpic">' + (l.thumb || '') + '<div><b class="nm">' + esc(l.name) + '</b>' + (l.description ? '<p class="desc">' + nl(l.description) + '</p>' : '') + '</div></div></td><td class="n">' + L.num(l.quantity) + '</td><td class="n">' + L.euros(l.unit) + '</td><td class="n">' + L.euros(l.amount) + '</td></tr>'; }).join('') + '</tbody></table>';
+    var tot = '<div class="totals">' + (T.rate ? rows([[w.subtotal, L.euros(T.ht)], [w.vat_line + ' ' + L.num(T.rate) + ' %', L.euros(T.tva)]]) : '') +
+      '<div class="grand"><span>' + esc(T.rate ? w.total_ttc : w.total) + '</span><b>' + L.euros(T.ttc) + '</b></div>' +
+      (isQuote && T.depositPercent ? '<div class="after">' + rows([[w.deposit + ', ' + L.num(T.depositPercent) + ' %', L.euros(T.acompte)], [w.balance, L.euros(T.solde)]]) + '</div>' : '') + '</div>';
     var bank = rows([[w.bank, m.bankName], ['IBAN', m.ibanNumber], ['BIC / SWIFT', m.bicOrSwiftCode]]);
-    return [docHead(title, r.reference, L.day(r.date)), '<div class="parties"><div><h3>' + esc(w.from) + '</h3><p>' + (house || '&nbsp;') + '</p></div><div><h3>' + esc(w.client) + '</h3><p>' + client + '</p></div></div>' + (note ? '<p class="note">' + esc(note) + '</p>' : '') +
-      '<table class="lines"><thead><tr><th>' + esc(w.designation) + '</th><th class="n">' + esc(w.qty) + '</th><th class="n">' + esc(w.unit) + '</th><th class="n">' + esc(w.amount) + '</th></tr></thead><tbody>' +
-      ls.map(function(l){ return '<tr><td>' + esc(l.name) + '</td><td class="n">' + L.num(l.quantity) + '</td><td class="n">' + L.euros(l.unit) + '</td><td class="n">' + L.euros(l.amount) + '</td></tr>'; }).join('') +
-      '</tbody></table>' + (w.bollo ? '<div class="bollo"><span>' + esc(w.bollo) + '</span><b></b></div>' : '') + '<div class="totalrow"><span>' + esc(w.total) + '</span><b>' + L.euros(total(q)) + '</b></div>' +
-      (bank ? '<section class="pay"><h3>' + esc(w.pay) + '</h3>' + bank + '</section>' : '') + (m.mentions ? '<p class="mentions">' + nl(m.mentions) + '</p>' : '') + (w.bollo_note ? '<p class="mentions">' + esc(w.bollo_note) + '</p>' : ''), foot(m)];
+    var cond = [r.leadTime ? '<p><b>' + esc(w.lead) + '</b> ' + esc(r.leadTime) + '</p>' : '', r.terms ? '<p>' + nl(r.terms) + '</p>' : '', isQuote && m.quoteTerms ? '<p>' + nl(m.quoteTerms) + '</p>' : ''].filter(Boolean).join('');
+    var terms = cond || bank ? '<div class="terms">' + (cond ? '<section><h3>' + esc(w.terms) + '</h3>' + cond + '</section>' : '<div></div>') + (bank ? '<section class="pay"><h3>' + esc(w.pay) + '</h3>' + bank + '</section>' : '') + '</div>' : '';
+    var accept = isQuote ? '<div class="accept"><div class="box"><h3>' + esc(w.house_sign + ' ' + (m.fullName || 'Alaya Fine Jewelry')) + '</h3><p>' + esc(L.day(r.date)) + '</p></div><div class="box"><h3>' + esc(w.accept) + '</h3><p>' + esc(w.accept_note) + '</p></div></div>' : '';
+    return [head, '<div class="parties"><div><h3>' + esc(w.from) + '</h3><p>' + (house || '&nbsp;') + '</p></div><div><h3>' + esc(w.client) + '</h3><p>' + client + '</p></div></div>' + table +
+      (w.bollo ? '<div class="bollo"><span>' + esc(w.bollo) + '</span><b></b></div>' : '') + tot + terms + accept + (m.mentions ? '<p class="mentions">' + nl(m.mentions) + '</p>' : '') + (w.bollo_note ? '<p class="mentions">' + esc(w.bollo_note) + '</p>' : ''), foot(m)];
   }
   var CSS = '@page{size:A4;margin:8mm 19mm 11mm}*{box-sizing:border-box}html,body{margin:0;background:#f3f3f1;color:#111;font:400 10.5pt/1.5 "Manrope",Helvetica,Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
     '.tools{position:sticky;top:0;display:flex;gap:10px;justify-content:center;padding:12px;background:#fff;border-bottom:1px solid #e6e6e6;z-index:2}.tools button{font:500 13px "Manrope",sans-serif;height:32px;padding:0 16px;border:1px solid #111;border-radius:4px;background:#111;color:#fff;cursor:pointer}.tools button.q{background:#fff;color:#111;border-color:#d6d6d6}' +
-    '.paper{position:relative;width:210mm;min-height:297mm;margin:10mm auto;padding:16mm 19mm 11mm;background:#fff;box-shadow:0 0 0 1px #e3e3e0;display:flex;flex-direction:column}.paper>.foot{margin-top:auto}.sheet{width:100%;border-collapse:collapse}.sheet>thead>tr>td,.sheet>tfoot>tr>td,.sheet>tbody>tr>td{padding:0;vertical-align:top}.runhead,.cover,.headspace,.footspace{display:none}.dtitle .legal{font:400 6.6pt "Overpass Mono",monospace;letter-spacing:.1em;text-transform:uppercase;color:#111;margin-top:1mm}.facts{margin-bottom:6mm}.facts .row{padding:1.6mm 0;font-size:9pt}.facts.two{display:grid;grid-template-columns:1fr 1fr;column-gap:14mm}.doc h1{font-size:21pt;white-space:nowrap}.doc .dhead{padding-bottom:7mm;margin-bottom:7mm}.doc .parties{margin-bottom:7mm}.doc .signs .sign{height:15mm}.boxes{display:inline-flex;align-items:center;gap:2mm;font-weight:400}.box{display:inline-block;width:3mm;height:3mm;border:1px solid #111;margin-left:3mm}.box.on{background:#111}.lines .q{width:22mm;text-align:left}.bollo{display:flex;justify-content:space-between;padding:3mm 0;font-size:10pt;color:#666}' +
+    '.paper{position:relative;width:210mm;min-height:297mm;margin:10mm auto;padding:16mm 19mm 11mm;background:#fff;box-shadow:0 0 0 1px #e3e3e0;display:flex;flex-direction:column}.paper>.foot{margin-top:auto}.sheet{width:100%;border-collapse:collapse}.sheet>thead>tr>td,.sheet>tfoot>tr>td,.sheet>tbody>tr>td{padding:0;vertical-align:top}.runhead,.cover,.headspace,.footspace{display:none}.dtitle .legal{font:400 6.6pt "Overpass Mono",monospace;letter-spacing:.1em;text-transform:uppercase;color:#111;margin-top:1mm}.facts{margin-bottom:6mm}.facts .row{padding:1.6mm 0;font-size:9pt}.facts.two{display:grid;grid-template-columns:1fr 1fr;column-gap:14mm}.doc h1{font-size:21pt;white-space:nowrap}.doc .dhead{padding-bottom:5mm;margin-bottom:5mm}.doc .parties{margin-bottom:6mm}.doc .signs .sign{height:15mm}.boxes{display:inline-flex;align-items:center;gap:2mm;font-weight:400}.box{display:inline-block;width:3mm;height:3mm;border:1px solid #111;margin-left:3mm}.box.on{background:#111}.lines .q{width:22mm;text-align:left}.bollo{display:flex;justify-content:space-between;padding:3mm 0;font-size:10pt;color:#666}' +
     'h1{font:400 26pt/1.15 "EB Garamond",Georgia,serif;margin:0;letter-spacing:.01em}h3,.kind,.cap,.lines th{font:400 7pt/1.3 "Overpass Mono",ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase;color:#777;margin:0}' +
     '.logo{height:11mm;width:auto;display:block}.chead{text-align:center;padding-bottom:7mm;border-bottom:1px solid #111;margin-bottom:7mm}.chead .logo{margin:0 auto 7mm}.chead .kind{margin-bottom:3mm;color:#111}.chead .ref{margin:3mm 0 0;font-size:9pt;color:#555}.chead .ref span{margin:0 2mm}' +
     '.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12mm;align-items:start}.col{min-width:0}.col>section,.col>.photo{margin-bottom:6.5mm}.cols .row{padding:1.75mm 0;font-size:9pt}section h3{padding-bottom:2.2mm;border-bottom:1px solid #111;margin-bottom:.5mm;break-after:avoid}' +
@@ -351,24 +397,84 @@ module.exports = function(cfg, tools){
     '.lot{margin-bottom:3.5mm;break-inside:avoid}.pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:5mm}.pair .row{padding:1.3mm 0;font-size:8.2pt;gap:3mm}.refs{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:5mm;margin:2mm 0 6.5mm}.refs section{margin:0}.refs h3{letter-spacing:.06em;font-size:5.6pt;line-height:1.35;min-height:6.4mm;display:flex;align-items:flex-end}.lead{display:flex;justify-content:space-between;margin:2.5mm 0 0;font:400 12pt "EB Garamond",Georgia,serif}.lead b{font-weight:500}.lead span{color:#555}.grades{width:100%;border-collapse:collapse;font-size:7pt;margin-top:.5mm}.grades td{padding:.5mm 0;line-height:1.3;border-bottom:1px solid #e4e4e4;color:#555}.grades td:last-child{text-align:right;color:#111;font-weight:600}' +
     '.foot{padding-top:4mm;border-top:1px solid #111;text-align:center}.foot p{margin:0 auto 1.5mm;max-width:150mm;font:400 6.6pt "Overpass Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:#111}.foot p.lead0{font:400 7.4pt/1.5 "Manrope",sans-serif;letter-spacing:0;text-transform:none;color:#666}' +
     '.dhead{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:9mm;border-bottom:1px solid #111;margin-bottom:9mm}.dtitle{text-align:right}.dtitle p{margin:1.5mm 0 0;font-size:9.5pt;color:#555}' +
-    '.parties{display:grid;grid-template-columns:1fr 1fr;gap:14mm;margin-bottom:10mm;break-inside:avoid}.parties h3{margin-bottom:2.5mm}.parties p{margin:0;font-size:10pt;line-height:1.55}.parties b{font-weight:600}.place{margin-bottom:9mm}.place p{margin:2mm 0 0}.note{margin:-4mm 0 8mm;font-size:9pt;color:#666}' +
-    '.lines{width:100%;border-collapse:collapse}.lines th{text-align:left;padding:0 0 2.5mm;border-bottom:1px solid #111;font-weight:400}.lines td{padding:3mm 0;border-bottom:1px solid #e4e4e4;vertical-align:top;font-size:10pt}.lines tr{break-inside:avoid}.lines .n{text-align:right;white-space:nowrap;padding-left:6mm;font-variant-numeric:tabular-nums}' +
+    '.parties{display:grid;grid-template-columns:1fr 1fr;gap:14mm;margin-bottom:6mm;break-inside:avoid}.parties h3{margin-bottom:2.5mm}.parties p{margin:0;font-size:10pt;line-height:1.55}.parties b{font-weight:600}.place{margin-bottom:9mm}.place p{margin:2mm 0 0}.note{margin:-4mm 0 8mm;font-size:9pt;color:#666}' +
+    '.lines{width:100%;border-collapse:collapse}.lines th{text-align:left;padding:0 0 2.2mm;border-bottom:1px solid #111;font-weight:400}.lines .withpic{display:flex;gap:4mm;align-items:center}.lines .withpic .thumb{width:16mm;height:16mm;object-fit:contain;background:#fff;border:1px solid #e4e4e4;flex:0 0 16mm}.lines td{padding:2.6mm 0;border-bottom:1px solid #e4e4e4;vertical-align:top;font-size:10pt}.lines tr{break-inside:avoid}.lines .n{text-align:right;white-space:nowrap;padding-left:6mm;font-variant-numeric:tabular-nums}' +
     '.totalrow{display:flex;justify-content:space-between;align-items:baseline;border-top:1px solid #111;margin:-1px 0 9mm;padding-top:4mm;font:400 15pt "EB Garamond",Georgia,serif;break-inside:avoid}.totalrow b{font-weight:400}.lines+.parties{margin-top:9mm}' +
     '.pay{width:55%;margin-bottom:8mm}.mentions{font-size:8pt;color:#666;margin:0 0 6mm}.signs{margin-top:9mm}.sign{height:22mm;border-bottom:1px solid #111;margin-top:4mm}' +
+    '.doc .dtitle .kind{color:#111;margin-bottom:2mm}.doc .dtitle h1{font-size:22pt}.dtitle .meta{margin-top:3mm}.dtitle .meta p{display:flex;justify-content:flex-end;gap:4mm;margin:0 0 .8mm;font-size:9pt;color:#666}.dtitle .meta b{font-weight:500;color:#111;font-variant-numeric:tabular-nums}' +
+    '.lines .nm{font-weight:500}.lines .desc{margin:1mm 0 0;font-size:8.6pt;line-height:1.45;color:#666;max-width:100mm}' +
+    '.totals{margin:-1px 0 5mm auto;width:80mm;border-top:1px solid #111;padding-top:1mm;break-inside:avoid}.totals .row{padding:1.7mm 0;font-size:9.5pt}.totals .grand{display:flex;justify-content:space-between;align-items:baseline;gap:6mm;padding:3mm 0 2.5mm;border-bottom:1px solid #111;font:400 15pt "EB Garamond",Georgia,serif}.totals .grand b{font-weight:400;font-variant-numeric:tabular-nums}.totals .after .row{font-size:9pt}.totals .after .row b{font-weight:500}' +
+    '.terms{display:grid;grid-template-columns:1.25fr 1fr;gap:14mm;margin-bottom:4mm;break-inside:avoid}.terms section{margin:0}.terms .pay{width:auto;margin:0}.terms p{margin:2.5mm 0 0;font-size:9pt;line-height:1.5;color:#333}.terms p b{font-weight:500;color:#111}' +
+    '.accept{display:flex;gap:14mm;margin:0 0 4mm;break-inside:avoid}.accept .box{flex:1 1 0;min-width:0;border:1px solid #111;padding:3mm 4mm;min-height:18mm}.accept .box h3{border:0;padding:0;margin:0 0 1.5mm;color:#111}.accept .box p{margin:0;font-size:8pt;line-height:1.45;color:#666}' +
+    '.prodhead{display:grid;grid-template-columns:52mm minmax(0,1fr);gap:8mm;margin-bottom:6mm;align-items:start}.prodhead .photo{margin:0;aspect-ratio:1}.prodid h2{font:400 18pt/1.2 "EB Garamond",Georgia,serif;margin:0 0 2mm}.prodid .row{padding:1.6mm 0;font-size:9pt}.prodid .text{font-size:9.5pt;margin-top:3mm}.prodsec{margin-bottom:5mm;break-inside:avoid}.prodsec h3{padding-bottom:1.8mm;margin-bottom:0}.lines.small td{padding:2mm 0;font-size:9pt}.lines.small th{padding-bottom:1.8mm}.subtotal{display:flex;justify-content:flex-end;gap:8mm;padding:1.8mm 0 0;font-size:9pt}.subtotal span{color:#666}.subtotal b{font-weight:500}/* 10 octobre, la fiche de production redessinee : la piece en tete, les trois chiffres, puis le detail leger, une page */.prodhead{grid-template-columns:44mm minmax(0,1fr);gap:8mm;margin:1mm 0 5mm;align-items:center}.prodhead .photo{margin:0;aspect-ratio:1;border:0;background:#f6f6f4}.prodid h2{font:400 19pt/1.15 "EB Garamond",Georgia,serif;margin:0 0 3mm}.prodid .row{padding:1.1mm 0;font-size:9pt}.prodid .text{margin-top:2.5mm;font-size:9.5pt}.prodkpi{display:grid;grid-template-columns:repeat(3,1fr);gap:0 8mm;padding:4mm 0;margin:0 0 5mm;border-top:1px solid #111;border-bottom:1px solid #111;break-inside:avoid}.prodkpi span{display:block;font-size:7.5pt;letter-spacing:.12em;text-transform:uppercase;color:#666;margin-bottom:1.6mm}.prodkpi b{display:block;font:400 17pt/1.1 "EB Garamond",Georgia,serif;font-variant-numeric:tabular-nums}.prodkpi small{display:block;margin-top:1.6mm;font-size:8pt;color:#666;line-height:1.4}.prodsec{margin-bottom:3.5mm}.prodsec h3{display:flex;break-after:avoid;justify-content:space-between;align-items:baseline;border-bottom:1px solid #111;padding-bottom:1.4mm;margin-bottom:0;font-size:8pt;letter-spacing:.12em;text-transform:uppercase;font-weight:500}.prodsec h3 em{font-style:normal;font:500 9.5pt/1 "Manrope",Helvetica,Arial,sans-serif;letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums}.prodsec .lines.small th{font-size:7.5pt;color:#666;border-bottom:1px solid #e4e4e4;padding:1.6mm 0 1.2mm;font-weight:400}.prodsec .lines.small td{padding:1.2mm 0;font-size:8.8pt;border-bottom:1px solid #eee}.totals.wide{width:96mm;margin-top:2mm}' +
+    '.tools a{font:500 13px "Manrope",sans-serif;height:32px;line-height:30px;padding:0 16px;border:1px solid #d6d6d6;border-radius:4px;background:#fff;color:#111;text-decoration:none}' +
     '@media print{html,body{background:#fff}.tools{display:none}.paper{display:block;width:auto;min-height:0;margin:0;padding:0;box-shadow:none}' +
     /* the table head and foot are only spacers that come back on every page; the running head and the foot are fixed, so they print on every sheet; a white block hides the running head on the first */
-    '.headspace{display:block;height:9mm}.footspace{display:block;height:16mm}.cert .footspace{height:25mm}.runhead{display:flex;position:fixed;top:0;left:0;right:0;height:6mm;align-items:center;justify-content:space-between;border-bottom:1px solid #111;padding-bottom:2mm;font:400 6.4pt "Overpass Mono",monospace;letter-spacing:.14em;text-transform:uppercase}.runhead img{height:3.6mm;width:auto}.cover{display:block;position:absolute;top:-6mm;left:-6mm;right:-6mm;height:15mm;background:#fff;z-index:2}.paper>.foot{position:fixed;bottom:0;left:0;right:0;margin:0;background:#fff}}';
-  function page(type, rec){
+    '.headspace{display:block;height:9mm}.footspace{display:block;height:13mm}.cert .footspace{height:25mm}.runhead{display:flex;position:fixed;top:0;left:0;right:0;height:6mm;align-items:center;justify-content:space-between;border-bottom:1px solid #111;padding-bottom:2mm;font:400 6.4pt "Overpass Mono",monospace;letter-spacing:.14em;text-transform:uppercase}.runhead img{height:3.6mm;width:auto}.cover{display:block;position:absolute;top:-6mm;left:-6mm;right:-6mm;height:15mm;background:#fff;z-index:2}.paper>.foot{position:fixed;bottom:0;left:0;right:0;margin:0;background:#fff}}';
+  var GOOGLE = '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500&family=Manrope:wght@400;500;600&family=Overpass+Mono:wght@400&display=swap">';
+  function dataURI(file, mime){ try { return 'data:' + mime + ';base64,' + fs.readFileSync(file).toString('base64'); } catch (e){ return ''; } }
+  /* the three fonts of the site, from the site's own files, so the PDF needs no network and prints the same everywhere */
+  function localFonts(){
+    var F = [['Manrope', 'manrope-normal-latin', 'normal'], ['EB Garamond', 'eb-garamond-normal-latin', 'normal'], ['EB Garamond', 'eb-garamond-italic-latin', 'italic'], ['Overpass Mono', 'overpass-mono-normal-latin', 'normal']];
+    return '<style>' + F.map(function(f){ var u = dataURI(path.join(cfg.site, 'fonts', f[1] + '.woff2'), 'font/woff2'); return u ? '@font-face{font-family:"' + f[0] + '";font-style:' + f[2] + ';font-weight:100 900;src:url(' + u + ') format("woff2")}' : ''; }).join('') + '</style>';
+  }
+  function inlineImages(html){
+    return html.replace(/src="\/studio\/logo\.png"/g, function(){ return 'src="' + dataURI(path.join(cfg.site, 'images', 'logo', 'alaya-logo-noir.png'), 'image/png') + '"'; })
+      .replace(/src="\/api\/atelier\/image\/([a-z0-9\-]+\.(jpg|png|webp))"/g, function(a, name, ext){ return 'src="' + dataURI(path.join(IMG, name), ext === 'jpg' ? 'image/jpeg' : 'image/' + ext) + '"'; })
+      .replace(/src="\/site\/(images\/[A-Za-z0-9_\-\/.]+\.(jpe?g|png|webp))"/g, function(a, rel, ext){ return 'src="' + dataURI(path.join(cfg.site, rel), /jpe?g/.test(ext) ? 'image/jpeg' : 'image/' + ext) + '"'; });
+  }
+  /* the house's print settings, on top of the sheet (Réglages > Impression) */
+  function printPrefs(m, type){ var fs = Number(m.docFontSize) > 0 ? Number(m.docFontSize) : 0, side = Number(m.docMarginSide) > 0 ? Number(m.docMarginSide) : 0, logo = Number(m.docLogoHeight) > 0 ? Number(m.docLogoHeight) : 0;
+    return (fs ? 'html,body{font-size:' + fs + 'pt}' : '') + (side ? '@page{margin-left:' + side + 'mm;margin-right:' + side + 'mm}' : '') + (logo ? '.logo{height:' + logo + 'mm}' : ''); }
+  function page(type, rec, forPdf){
     var t = TYPES[type], lang = W[rec.lang] ? rec.lang : DEFAULT_LANG[type], parts = BODY[type](rec, maison(), speak(lang));
-    return '<!doctype html><html lang="' + lang + '"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"><title>' + esc(t.one + ' ' + (rec.reference || rec.number || '')) + '</title>' +
-      '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500&family=Manrope:wght@400;500;600&family=Overpass+Mono:wght@400&display=swap">' +
-      '<style>' + CSS + '</style></head><body><div class="tools"><button onclick="window.print()">Imprimer ou enregistrer en PDF</button><button class="q" onclick="window.close()">Fermer</button></div>' +
-      '<main class="paper ' + (/^cert/.test(type) ? 'cert' : 'doc') + '"><div class="runhead"><img src="/studio/logo.png" alt=""><span>' + ((/<p class="kind">([^<]*)/.exec(parts[0]) || /<h1>([^<]*)/.exec(parts[0]) || [])[1] || '') + ' · N° ' + esc(rec.reference || rec.number || '') + '</span></div><div class="cover"></div>' +
-      '<table class="sheet"><thead><tr><td><div class="headspace"></div></td></tr></thead><tfoot><tr><td><div class="footspace"></div></td></tr></tfoot><tbody><tr><td>' + parts[0] + parts[1] + '</td></tr></tbody></table>' + parts[2] + '</main></body></html>';
+    var html = '<!doctype html><html lang="' + lang + '"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"><title>' + esc(t.one + ' ' + (rec.reference || rec.number || '')) + '</title>' +
+      (forPdf ? localFonts() : GOOGLE) + '<style>' + CSS + printPrefs(maison(), type) + (forPdf ? '@page{margin:8mm ' + (Number(maison().docMarginSide) > 0 ? Number(maison().docMarginSide) : 19) + 'mm ' + (/^cert/.test(type) ? '36mm' : type === 'productions' ? '18mm' : '24mm') + '}.runhead,.cover,.headspace,.footspace,.paper>.foot{display:none!important}.flow .accept{margin-bottom:3mm}.flow .mentions{margin-bottom:0}.flow>:last-child{margin-bottom:0}' : '') + '</style></head><body>' +
+      (forPdf ? '' : '<div class="tools"><button onclick="window.print()">Imprimer</button><a href="pdf" download>Télécharger le PDF</a><button class="q" onclick="window.close()">Fermer</button></div>') +
+      '<main class="paper ' + (/^cert/.test(type) ? 'cert' : 'doc') + '"><div class="runhead"><img src="/studio/logo.png" alt=""><span>' + ((/<p class="kind">([^<]*)/.exec(parts[0]) || /<h1>([^<]*)/.exec(parts[0]) || [])[1] || '') + ' · N° ' + esc(rec.reference || rec.number || '') + '</span></div><div class="cover"></div>' +
+      /* in the browser the content sits in a table whose head and foot are spacers that repeat on every printed page ; in the PDF Chromium draws the foot itself, so the content flows free */
+      (forPdf ? '<div class="flow">' + parts[0] + parts[1] + '</div>' : '<table class="sheet"><thead><tr><td><div class="headspace"></div></td></tr></thead><tfoot><tr><td><div class="footspace"></div></td></tr></tfoot><tbody><tr><td>' + parts[0] + parts[1] + '</td></tr></tbody></table>' + parts[2]) + '</main></body></html>';
+    return forPdf ? inlineImages(html) : html;
+  }
+
+  /* ---------- the PDF itself (10 octobre) : the same page, printed by a headless Chromium through playwright-core, with the page numbers in the margin.
+     Nothing installed here : it finds playwright-core (PLAYWRIGHT, ./node_modules, the copy of the mezcal tools) and the Chromium of the Playwright cache
+     (CHROMIUM, or ~/Library/Caches/ms-playwright). Without them the route says so and the Imprimer button remains. ---------- */
+  var PW_PATHS = [process.env.PLAYWRIGHT, path.join(__dirname, 'node_modules', 'playwright-core'), path.join(os.homedir(), 'Desktop', 'mezcalitoo', 'MEZCAL_IVRESSE_DAMOUR', '17_SITE', 'outils', 'node_modules', 'playwright-core')].filter(Boolean);
+  function chromiumPath(){
+    if (process.env.CHROMIUM) return process.env.CHROMIUM;
+    var dir = path.join(os.homedir(), 'Library', 'Caches', 'ms-playwright');
+    try { var d = fs.readdirSync(dir).filter(function(x){ return /^chromium_headless_shell-\d+$/.test(x); }).sort(function(a, b){ return Number(b.split('-')[1]) - Number(a.split('-')[1]); })[0];
+      if (d) return path.join(dir, d, 'chrome-headless-shell-mac-arm64', 'chrome-headless-shell'); } catch (e){}
+    return '';
+  }
+  var browser = null, browserIdle = null;
+  function toPDF(html, footer){
+    var pw = null; for (var i = 0; i < PW_PATHS.length && !pw; i++){ try { pw = require(PW_PATHS[i]); } catch (e){} }
+    var exe = chromiumPath();
+    if (!pw || !exe || !fs.existsSync(exe)) return Promise.reject(new Error('le PDF demande playwright-core et son Chromium (variables PLAYWRIGHT et CHROMIUM) ; le bouton Imprimer reste'));
+    var b = browser ? Promise.resolve(browser) : pw.chromium.launch({ executablePath: exe, headless: true }).then(function(x){ browser = x; x.on('disconnected', function(){ browser = null; }); return x; });
+    return b.then(function(br){
+      clearTimeout(browserIdle); browserIdle = setTimeout(function(){ var x = browser; browser = null; if (x) x.close()['catch'](function(){}); }, 120000); browserIdle.unref();
+      return br.newPage().then(function(p){
+        return p.setContent(html, { waitUntil: 'load' }).then(function(){ return p.evaluate(function(){ return document.fonts.ready.then(function(){ return true; }); }); })
+          .then(function(){ var opts = { format: 'A4', printBackground: true, preferCSSPageSize: true, displayHeaderFooter: true, headerTemplate: '<span></span>', footerTemplate: footer }; return p.pdf(opts)['catch'](function(){ return new Promise(function(r){ setTimeout(r, 400); }).then(function(){ return p.pdf(opts); }); }); })
+          ['finally'](function(){ p.close()['catch'](function(){}); });
+      });
+    });
+  }
+  /* the foot of every PDF page, drawn by Chromium in the bottom margin : the house line, the site, then the document and the page */
+  function footerHTML(label, num, pageWord, m, lead){
+    var line = houseLine(m || {}), F = 'font:6.4pt Helvetica,Arial,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:#111';
+    return '<div style="width:100%;padding:0 19mm;box-sizing:border-box;' + F + '">' + (lead ? '<p style="margin:0 auto 1.5mm;max-width:150mm;text-align:center;font:7pt Helvetica,Arial,sans-serif;letter-spacing:0;text-transform:none;color:#666;line-height:1.45">' + esc(lead) + '</p>' : '') +
+      '<div style="border-top:1px solid #111;padding-top:3mm;text-align:center">' + (line ? '<p style="margin:0 0 1.2mm">' + line + '</p>' : '') + '<p style="margin:0 0 3mm">alayafinejewelry.com</p></div>' +
+      '<div style="display:flex;justify-content:space-between"><span>' + esc(label + ' · N° ' + num) + '</span><span>' + esc(pageWord) + ' <span class="pageNumber"></span> / <span class="totalPages"></span></span></div></div>';
   }
 
   /* ---------- the management layer (atelier-gestion.js): production, vendors, transport, foundry, reports, gold, dashboard ---------- */
-  var G = require('./atelier-gestion')(cfg, tools, { TYPES: TYPES, MAISON: MAISON, fileOf: fileOf, load: load, save: save, maison: maison, newId: newId, nextRef: nextRef, everHad: everHad, qrSVG: qrSVG });
+  var G = require('./atelier-gestion')(cfg, tools, { TYPES: TYPES, MAISON: MAISON, B: B, load: load, save: save, maison: maison, newId: newId, nextRef: nextRef, everHad: everHad, qrSVG: qrSVG });
+  /* the JSON files of the first days, read into the base once, then left beside it as .importe */
+  var imported = B.importJSON(TYPES); if (imported.length) console.log('base : ' + imported.length + ' fichiers importes (' + imported.join(', ') + ')');
 
   /* ---------- the routes, under /api/atelier ---------- */
   function api(req, res, u, user, p){
@@ -381,7 +487,7 @@ module.exports = function(cfg, tools){
       var out = { types: {}, maison: maison(), maisonFields: MAISON, records: {} };
       Object.keys(TYPES).forEach(function(k){ var t = TYPES[k], list = load(k);
         out.types[k] = { one: t.one, name: t.name, list: t.list, groups: t.groups, steps: t.steps, last: t.last, money: !!t.money, fromQuote: !!t.fromQuote, noDoc: !!t.noDoc, noCreate: !!t.noCreate, next: t.byNumber ? nextNumber(everHad(k, list)) : nextRef(k, everHad(k, list)) };
-        out.records[k] = list.map(function(r){ return Object.assign({ itemsCount: ((t.fromQuote ? (r.quote || {}).items : r.items || r.deliveryNoteItem || r.transportItem) || []).length }, r, t.view ? t.view(r) : null, t.money ? { total: t.total ? t.total(r) : total(t.fromQuote ? (r.quote || {}) : r) } : null); }); });
+        out.records[k] = list.map(function(r){ return Object.assign({ itemsCount: ((t.fromQuote ? (r.quote || {}).items : r.items || r.deliveryNoteItem || r.transportItem) || []).length }, r, t.view ? t.view(r) : null, t.money ? { total: t.total ? t.total(r) : totals(t.fromQuote ? (r.quote || {}) : r, out.maison, k === 'devis' ? r : null).ttc } : null); }); });
       G.extend(out, user);
       tools.send(res, 200, out); return true;
     }
@@ -392,22 +498,31 @@ module.exports = function(cfg, tools){
       if (!doc){ tools.fail(res, 404, 'not found'); return true; }
       tools.send(res, 200, page(type, doc), { 'Content-Type': 'text/html; charset=utf-8' }); return true;
     }
+    if (G_ && TYPES[type] && !TYPES[type].noDoc && parts[2] === 'pdf'){
+      var pr = !G.can(user, type, false) ? null : load(type).filter(function(r){ return r.id === id; })[0];
+      if (!pr){ tools.fail(res, 404, 'not found'); return true; }
+      var num = pr.reference || pr.number || '', label = TYPES[type].one, wp = (W[pr.lang] || W[DEFAULT_LANG[type]] || W.fr).page || 'Page';
+      var wl = W[pr.lang] || W[DEFAULT_LANG[type]] || W.fr, lead = /^cert-/.test(type) ? (type === 'cert-bijoux' ? wl.jewel_foot : wl.disclaimer) : '';
+      return toPDF(page(type, pr, true), footerHTML(label, num, wp, maison(), lead)).then(function(buf){
+        tools.audit(user, 'atelier-pdf', { type: type, reference: num });
+        tools.send(res, 200, buf, { 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline; filename="' + (label + ' ' + num).normalize('NFD').replace(/[^\w.\- ]+/g, '').trim().replace(/\s+/g, '-') + '.pdf"' });
+      }, function(e){ tools.fail(res, 501, e.message); });
+    }
     if (G_){ tools.fail(res, 404, 'not found'); return true; }
     /* his permissions: an admin writes everywhere, anyone else only where it is ticked for them (the house's settings stay with the admins) */
     if (!(type === 'maison' ? user.role === 'admin' : G.can(user, type, true))){ tools.fail(res, 403, 'not allowed'); return true; }
     if (req.method === 'DELETE' && TYPES[type] && id){
       if (!G.canDelete(user, type)){ tools.fail(res, 403, 'not allowed'); return true; }
-      var all = load(type), gone = all.filter(function(r){ return r.id === id; })[0];
+      /* nothing is destroyed: the line keeps its place in the base with the day it left (the archives) */
+      var gone = B.objets.trash(type, id);
       if (!gone){ tools.fail(res, 404, 'not found'); return true; }
-      /* nothing is destroyed: what leaves the list is appended to the bin of its object */
-      var bin = fileOf(TYPES[type].file + '.corbeille'); tools.writeAtomic(bin, JSON.stringify(tools.readJSON(bin, []).concat([Object.assign({ deletedAt: tools.now() }, gone)]), null, 1) + '\n');
-      save(type, all.filter(function(r){ return r.id !== id; })); if (TYPES[type].onDelete) TYPES[type].onDelete(gone); tools.audit(user, 'atelier-delete', { type: type, reference: gone.reference || gone.number });
+      if (TYPES[type].onDelete) TYPES[type].onDelete(gone); tools.audit(user, 'atelier-delete', { type: type, reference: gone.reference || gone.number });
       tools.send(res, 200, { ok: true }); return true;
     }
     return tools.readJSONBody(req, 12 * 1048576).then(function(b){
       try {
         if (type === 'maison' && req.method === 'PUT'){
-          var m = clean(MAISON, b, maison()); tools.writeAtomic(fileOf('maison'), JSON.stringify(m, null, 1) + '\n'); tools.audit(user, 'atelier-maison'); return tools.send(res, 200, m);
+          var m = clean(MAISON, b, maison()); B.reglages.set('maison', m); tools.audit(user, 'atelier-maison'); return tools.send(res, 200, m);
         }
         var t = TYPES[type], list = load(type), rec;
         if (req.method === 'POST' && !id){
@@ -418,7 +533,10 @@ module.exports = function(cfg, tools){
             if (!q) throw new Error('il faut choisir un devis');
             rec.quote = JSON.parse(JSON.stringify(q));
           }
-          if (!t.byNumber) rec.reference = type === 'factures' && maison().invoiceNumbering === 'ilyes' ? G.hisInvoiceRef(b.filed === true, everHad(type, list)) : nextRef(type, everHad(type, list));
+          /* 10 octobre : the number can be typed at creation ; it must be free, deleted ones included */
+          var wanted = tools.txt(b.reference).trim().slice(0, 40);
+          if (!t.byNumber && wanted){ if (everHad(type, list).some(function(r){ return r.reference === wanted; })) return tools.fail(res, 409, 'ce numéro est déjà pris : ' + wanted); rec.reference = wanted; }
+          else if (!t.byNumber) rec.reference = type === 'factures' && maison().invoiceNumbering === 'ilyes' ? G.hisInvoiceRef(b.filed === true, everHad(type, list)) : nextRef(type, everHad(type, list));
           list.push(rec);
         } else if (req.method === 'PUT' && id){
           rec = list.filter(function(r){ return r.id === id; })[0];
@@ -432,7 +550,8 @@ module.exports = function(cfg, tools){
         }
         if (!rec.date && req.method === 'POST' && fieldsOf(type).some(function(f){ return f[0] === 'date'; })) rec.date = new Date().toISOString().slice(0, 10);
         rec.updatedAt = tools.now(); rec.updatedBy = user.name || user.email;
-        save(type, list); if (t.after) t.after(rec, req.method === 'POST'); tools.audit(user, 'atelier-' + (req.method === 'POST' ? 'create' : 'update'), { type: type, reference: rec.reference || rec.number });
+        try { B.objets.put(type, rec); } catch (e2){ if (/UNIQUE/.test(e2.message)) throw new Error('ce numéro existe déjà : ' + (rec.reference || rec.number)); throw e2; }
+        if (t.after) t.after(rec, req.method === 'POST'); tools.audit(user, 'atelier-' + (req.method === 'POST' ? 'create' : 'update'), { type: type, reference: rec.reference || rec.number });
         tools.send(res, req.method === 'POST' ? 201 : 200, rec);
       } catch (e){ tools.fail(res, 400, e.message); }
     });
@@ -443,7 +562,7 @@ module.exports = function(cfg, tools){
 /* the check: node atelier.js */
 if (require.main === module){
   var assert = require('assert'), os = require('os');
-  var m = module.exports({ data: fs.mkdtempSync(path.join(os.tmpdir(), 'atelier-')) }, { txt: function(v){ return (v === 0 || v) ? String(v) : ''; }, readJSON: function(p, f){ return f; }, writeAtomic: function(){} });
+  var m = module.exports({ data: fs.mkdtempSync(path.join(os.tmpdir(), 'atelier-')) }, { txt: function(v){ return (v === 0 || v) ? String(v) : ''; }, readJSON: function(p, f){ return f; }, writeAtomic: function(){}, now: function(){ return new Date().toISOString(); } });
   assert.strictEqual(m.total({ gainPercentage: 10, items: [{ price: 100, quantity: 2 }, { price: 33.33, quantity: 3 }] }), 329.99);
   assert.strictEqual(m.total({ items: [{ price: 1200, quantity: 1 }] }), 1200);
   var y = new Date().getFullYear();
@@ -473,6 +592,7 @@ if (require.main === module){
   assert.strictEqual(m.G.can({ role: 'admin' }, 'devis', true), true); assert.strictEqual(m.G.can({ role: 'producer', email: 'x' }, 'devis', true), false); assert.strictEqual(m.G.can({ role: 'producer', email: 'x' }, 'productions', false), false);
   /* his ticket: 0.50 ct of diamonds, 5.00 g of gold, 1 ct of sapphire, 10 stones, the cost times the factor */
   var tk = m.G.ticket(Object.assign({ reference: '000007', gemsItems: [{ carat: 1, xe: 300, type: 'Sapphire' }] }, pr, { gemsItems: [{ carat: 1, type: 'Sapphire' }] }), m.qrSVG);
-  assert.ok(/#000007/.test(tk) && /5445\.00€/.test(tk) && /0\.50ct/.test(tk) && /5\.00g/.test(tk) && /1ct 1Sa 10PT/.test(tk), 'ticket');
+  /* the label redrawn on 10 October : reference, gold in grams, diamonds and gems in carats, the stones set, the sale price in euros */
+  assert.ok(/000007/.test(tk) && /Or 18 k<\/i>5,00 g/.test(tk) && /Diamants<\/i>0,50 ct/.test(tk) && /Sapphire<\/i>1,00 ct/.test(tk) && /Pierres serties<\/i>10/.test(tk) && /5.445 €/.test(tk), 'ticket');
   console.log('atelier ok');
 }

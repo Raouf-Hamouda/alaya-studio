@@ -11,7 +11,7 @@ X.register('comptes', function(host){
   X.count(String(data.users.length));
   var wrap = node('div', 'tablewrap inner', host), table = node('table', 'table', wrap), hr = node('tr', '', node('thead', '', table)), tb = node('tbody', '', table);
   wrap.style.marginTop = '12px';
-  ['Identifiant', 'Nom', 'Rôle', 'Créé le', '', ''].forEach(function(t){ node('th', '', hr, t); });
+  [['Identifiant', 'client'], ['Nom', 'text'], ['Rôle', 'list'], ['Créé le', 'date'], '', ''].forEach(function(t){ if (Array.isArray(t)) X.th(hr, t[0], t[1]); else node('th', '', hr, t); });
   data.users.forEach(function(u){
     var tr = node('tr', 'plain', tb), me = u.email === data.me; node('td', 'first', tr, u.email + (me ? ' (vous)' : '')); node('td', '', tr, u.name);
     var rc = node('td', '', tr), se = node('select', '', rc); Object.keys(ROLES).forEach(function(k){ var o = node('option', '', se, ROLES[k]); o.value = k; }); se.value = u.role; se.setAttribute('aria-label', 'Rôle de ' + u.email);

@@ -33,6 +33,7 @@ module.exports = function(cfg, tools){
   var IMG = /<img\b[^>]*>/g, CARD = /<article class="product-card[\s\S]*?<\/article>|<nav class="(?:breadcrumb|fil-bas)"[\s\S]*?<\/nav>/g;   /* piece cards and the breadcrumb are not page texts */
   function scan(h){
     var a = h.indexOf('<main'), b = h.indexOf('</main>');
+    if (b < 0) b = h.indexOf('<div class="footer-service">', a);   /* the four legal pages never close their <main>: they end at the footer */
     if (a < 0 || b < 0) return { texts: [], images: [] };
     var main = h.slice(a, b), skip = [], m, texts = [], images = [];
     CARD.lastIndex = 0; while ((m = CARD.exec(main))) skip.push([m.index, m.index + m[0].length]);
@@ -41,8 +42,10 @@ module.exports = function(cfg, tools){
     while ((m = TEXT.exec(main))){
       var tag = m[1] || m[4], attrs = m[2] || m[5] || '', inner = m[1] ? m[3] : m[6];
       if (inCard(m.index) || !inner.replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '')) continue;
+      if (/<span class="n">\d+<\/span>\s*$/.test(inner)) continue;   /* a filter chip and its count: written by the catalogue, not a page text */
       if (/\bhidden\b|aria-hidden="true"/.test(attrs) || /class="[^"]*\b(count|n|chev|vus|panier-compte)\b/.test(attrs)) continue;
       var open = m[0].indexOf('>') + 1, cls = /class="([^"]*)"/.exec(attrs);
+      inner = inner.replace(/\s*<span class="count">\(\d+\)<\/span>$/, '');   /* a title's piece count is the catalogue's: only the words before it are offered */
       texts.push({ tag: tag, cls: cls ? cls[1] : '', html: inner, plain: inner.indexOf('<') < 0, at: a + m.index + open, len: inner.length });
     }
     IMG.lastIndex = 0;
@@ -63,7 +66,7 @@ module.exports = function(cfg, tools){
   }
   var EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
   function save(rel, input){
-    var h = read(rel), s = scan(h), changes = [], tx = cat.begin('Page ' + (titleOf(h).split(' | ')[0] || rel));
+    var h = read(rel), s = scan(h), changes = [], reworded = [], tx = cat.begin('Page ' + (titleOf(h).split(' | ')[0] || rel));
     try {
       (input.texts || []).forEach(function(e){
         var t = s.texts[e.i]; if (!t) throw new Error('texte ' + e.i + ' introuvable : la page a changé, rouvrez-la');
@@ -71,7 +74,7 @@ module.exports = function(cfg, tools){
         if (t.plain) neu = escText(typo(e.text));
         else { neu = String(e.text).trim(); if (tagsOf(neu) !== tagsOf(t.html) || /<script|<style|\son[a-z]+=/i.test(neu)) throw new Error('texte ' + (e.i + 1) + ' : les balises du texte doivent rester les mêmes'); }
         if (!neu.replace(/<[^>]*>/g, '').trim()) throw new Error('texte ' + (e.i + 1) + ' : il ne peut pas être vide');
-        if (neu !== t.html) changes.push({ at: t.at, len: t.len, by: neu });
+        if (neu !== t.html){ changes.push({ at: t.at, len: t.len, by: neu }); if (t.plain) reworded.push([unesc(t.html), unesc(neu)]); }
       });
       (input.images || []).forEach(function(e, k){
         var im = s.images[e.i]; if (!im) throw new Error('image ' + e.i + ' introuvable : la page a changé, rouvrez-la');
@@ -97,6 +100,8 @@ module.exports = function(cfg, tools){
         h = h.replace(/(<meta name="description" content=")[^"]*(")/, '$1' + de + '$2').replace(/(<meta property="og:description" content=")[^"]*(")/, '$1' + de + '$2');
       }
       tx.update(rel, function(){ return h; });
+      /* a reworded sentence keeps the English and Italian it had (the site translates by the whole French string) */
+      if (reworded.length && cat.aliasPhrases(tx, reworded)) cat.refreshSite(tx, '');
       return { file: rel, changed: changes.length };
     } catch (e){ tx.rollback(); throw e; }
   }

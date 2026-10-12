@@ -19,7 +19,9 @@ var fs = require('fs'), path = require('path'), cp = require('child_process'), c
 module.exports = function(cfg){
   var SITE = cfg.site, ORIGIN = 'https://alayafinejewelry.com', M = 'mariages-et-celebrations';
   var RAYONS = { 'bagues': 'Bagues', 'alliances': 'Alliances', 'bracelets': 'Bracelets', 'colliers-et-pendentifs': 'Colliers et pendentifs', 'boucles-d-oreilles': 'Boucles d’oreilles' };
-  var COLLECTIONS = { 'timeless-elegance': 'Timeless Elegance', 'eternal-balance': 'Eternal Balance', 'mother-nature': 'Mother Nature' };
+  /* the collections are read from the site : one folder under collections/, its name in its h1 (10 octobre : the studio can add one) */
+  var COLLECTIONS = {};
+  (function(){ var dir = path.join(SITE, 'collections'); try { fs.readdirSync(dir, { withFileTypes: true }).forEach(function(e){ if (!e.isDirectory()) return; var m = /<h1>([^<]*?)\s*<span class="count">/.exec(fs.readFileSync(path.join(dir, e.name, 'index.html'), 'utf8')); if (m) COLLECTIONS[e.name] = m[1].replace(/&amp;/g, '&').replace(/&#x27;/g, '\'').replace(/&quot;/g, '"'); }); } catch (e){} })();
   var BUDGETS = ['cadeaux/moins-de-1500', 'cadeaux/de-1500-a-5000', 'cadeaux/plus-de-5000'];
   var LISTS = Object.keys(RAYONS).concat(Object.keys(COLLECTIONS).map(function(c){ return 'collections/' + c; }),
     [M, M + '/fiancailles', M + '/bagues-de-fiancailles', M + '/mariage', 'cadeaux/pour-elle', 'cadeaux/fiancailles', 'cadeaux/mariage'], BUDGETS, ['toute-la-collection']);
@@ -27,6 +29,7 @@ module.exports = function(cfg){
   var NB = ' ';
   var MONTURES = [['Or blanc 750 ‰', 'blanc'], ['Or rose 750 ‰', 'rose'], ['Or jaune 750 ‰', 'jaune'], ['Or Rose et Blanc', 'rose'], ['Or Jaune et Blanc', 'jaune']].map(function(m){ return { value: m[0].replace(/ /g, NB), couleur: m[1] }; });
   var PASTILLE = { blanc: '#e6e6e4', rose: '#dfa992', jaune: '#d9b64e' };
+  var LIBELLE = { 'Diamant fancy': 'Diamant de couleur' };   /* a value the buying card shows under another word (the cart keeps the value) */
   var AXES = { 'bagues': { a: 'Taille de la bague', l: 'Taille de bague', v: ['46', '48', '50', '52', '54', '56', '58', '60'] },
                'alliances': { a: 'Taille de la bague', l: 'Taille de bague', v: ['46', '48', '50', '52', '54', '56', '58', '60'] },
                'colliers-et-pendentifs': { a: 'Longueur de la chaine', l: 'Longueur de chaîne', v: ['40', '45', '50', '55', '60'] } };
@@ -119,7 +122,8 @@ module.exports = function(cfg){
       var p = P[slug], on = mem.on[slug] || [], rayon = on.filter(function(k){ return RAYONS[k]; })[0] || '';
       var coll = (on.filter(function(k){ return k.indexOf('collections/') === 0; })[0] || '').replace('collections/', '');
       var f = /data-filtres="([^"]*)"/.exec(mem.cards[slug] || '');
-      return { slug: slug, name: p.n, price: p.p, image: p.i, url: p.u, options: p.o || [], images: p.im || [], rayon: rayon, collection: coll, pages: on,
+      var ed = etatDelai(slug);
+      return { slug: slug, name: p.n, price: p.p, image: p.i, url: p.u, options: p.o || [], images: p.im || [], rayon: rayon, collection: coll, pages: on, etat: ed.etat, delai: ed.delai,
                fiancailles: on.indexOf(M + '/fiancailles') >= 0, mariage: on.indexOf(M + '/mariage') >= 0, filtres: f && f[1] ? unesc(f[1]).split('; ') : [] };
     });
   }
@@ -129,7 +133,7 @@ module.exports = function(cfg){
     all().forEach(function(p){ p.filtres.forEach(function(f){ filtres[f] = 1; }); });
     Object.keys(piecesMap()).forEach(function(slug){
       var h; try { h = read('piece/' + slug + '/index.html'); } catch (e){ return; }
-      var ul = /<ul class="attributs">([\s\S]*?)<\/ul>/.exec(h), re = /<li><span>([^<]+)<\/span>/g, m;
+      var ul = /<ul class="attributs">([\s\S]*?)<\/ul>/.exec(h), re = /<li(?: class="[^"]*")?><span>([^<]+)<\/span>/g, m;
       if (ul) while ((m = re.exec(ul[1]))) labels[unesc(m[1])] = (labels[unesc(m[1])] || 0) + 1;
       re = /class="gal-groupe" data-couleur="\w*" data-pierre="([^"]+)"/g; while ((m = re.exec(h))) pierres[unesc(m[1])] = 1;
     });
@@ -208,6 +212,7 @@ module.exports = function(cfg){
         res.forEach(function(r){ h = h.replace(r[0], '$1' + r[1] + '$2'); });
         if (bumpPieces) h = h.replace(/pieces\.js\?v=[0-9a-z]+/g, 'pieces.js?v=' + bumpPieces);
         if (tx.langues) h = h.replace(/langues\.js\?v=[0-9a-z]+/g, 'langues.js?v=' + tx.stamp.slice(0, 16).replace(/[-T]/g, ''));
+        if (tx.css) h = h.replace(/style\.css\?v=[0-9a-z]+/g, 'style.css?v=' + tx.stamp.slice(0, 16).replace(/[-T]/g, ''));
         return h;
       });
     });
@@ -237,26 +242,63 @@ module.exports = function(cfg){
   function galHTML(name, variants, pre){
     function attr(v){ return esc(v); }
     var p = { name: name };
-    return variants.map(function(v, i){ return '<div class="gal-groupe" data-couleur="' + v.couleur + '" data-pierre="' + attr(v.pierre) + '"' + (i ? ' hidden' : '') + '><div class="gal-vue"><img src="' + pre + v.image + '" alt="' + attr(p.name) + '"' + (v.attrs || '') + '></div>' + (v.extra || '') + '</div>'; }).join('');
+    return variants.map(function(v, i){ return '<div class="gal-groupe" data-couleur="' + v.couleur + '" data-pierre="' + attr(v.pierre) + '"' + (i ? ' hidden' : '') + '><div class="gal-vue"><img' + (v.pre || '') + ' src="' + pre + v.image + '" alt="' + attr(p.name) + '"' + (v.attrs || '') + '></div>' + (v.extra || '') + '</div>'; }).join('');
   }
-  function achatHTML(p, variants, pre){
+  function achatHTML(p, variants, pre, rest){
     function attr(v){ return esc(v); }
     var vigns = variants.length > 1 ? '<div class="variations"><p class="variations-titre">Variations</p><div class="gal-vigns">' + variants.map(function(v, i){
-      return '<button class="gal-vign' + (i ? '' : ' is-on') + '" data-couleur="' + v.couleur + '" data-pierre="' + attr(v.pierre) + '" type="button" aria-label="' + attr(v.aria || v.pierre) + '"><img src="' + pre + v.image + '" alt=""' + (v.vattrs || '') + '></button>'; }).join('') + '</div></div>' : '';
+      return '<button class="gal-vign' + (i ? '' : ' is-on') + '" data-couleur="' + v.couleur + '" data-pierre="' + attr(v.pierre) + '" type="button" aria-label="' + attr(v.aria || v.pierre) + '"><img src="' + pre + v.image + '"' + (v.vtail !== undefined ? v.vtail : ' alt=""') + '></button>'; }).join('') + '</div></div>' : '';
     var sels = p.options.map(function(o){
       return '<div class="sel" data-axe="' + attr(o.a) + '">\n  <button class="sel-tete"><span class="sel-label">' + esc(o.l) + '</span><span class="sel-val"></span><span class="chev">&rsaquo;</span></button>\n  <div class="sel-corps" hidden>' + o.v.map(function(v){
         var m = o.a === 'Monture' ? MONTURES.filter(function(x){ return x.value === v; })[0] : null;
         if (m) return '<button class="opt opt--metal" data-axe="Monture" data-value="' + attr(v) + '" data-couleur="' + m.couleur + '"><span class="pastille" style="background:' + PASTILLE[m.couleur] + '"></span>' + esc(v) + '</button>';
-        return '<button class="opt" data-axe="' + attr(o.a) + '" data-value="' + attr(v) + '"' + (isVariantAxis(o.a) ? ' data-pierre="' + attr(pierreOf(o, v, variants)) + '"' : '') + '>' + esc(v) + '</button>';
+        return '<button class="opt" data-axe="' + attr(o.a) + '" data-value="' + attr(v) + '"' + (isVariantAxis(o.a) ? ' data-pierre="' + attr(pierreOf(o, v, variants)) + '"' : '') + '>' + esc(LIBELLE[v] || v) + '</button>';
       }).join('') + '</div>\n</div>'; }).join('');
     var ring = p.options.some(function(o){ return Object.keys(AXES).some(function(r){ return AXES[r].a === o.a; }); });   /* a size to choose, a guide to choose it */
-    var buy = p.price > 0
-      ? '<div class="achat-boutons"><button class="btn-pay" type="button">&#63743; Pay</button><button class="btn-panier" type="button" data-slug="' + p.slug + '">Ajouter au panier</button></div>'
-      : '<div class="achat-boutons"><a class="btn-panier btn-panier--plein" href="' + pre + 'nous-contacter/index.html">Demander le prix</a></div>';
-    return '<div class="achat" data-nom="' + attr(p.name) + '" data-prix="' + pyFloat(p.price) + '" data-img="' + p.image + '" data-url="piece/' + p.slug + '/index.html">\n  <h1>' + esc(p.name) + '</h1>\n  ' + vigns + '\n  ' + sels +
+    var buy = boutonsHTML(p.slug, p.price, p.etat, p.delai, pre);
+    /* the card since 4 Oct: name and price together, the piece's sentence and its collection under them,
+       and after the buttons the promises and the panels (rest: carried as the page has them, see setTexts) */
+    return '<div class="achat" data-nom="' + attr(p.name) + '" data-prix="' + pyFloat(p.price) + '" data-img="' + p.image + '" data-url="piece/' + p.slug + '/index.html">\n  ' +
+      '<div class="achat-tete"><h1>' + esc(p.name) + '</h1><p class="achat-prix">' + prix(p.price) + '</p></div>' + (p.ligne ? '<p class="achat-idee">' + esc(p.ligne) + '</p>' : '') +
+      (COLLECTIONS[p.collection] ? '<p class="fiche-collection">Collection ' + esc(COLLECTIONS[p.collection]) + '</p>' : '') + '\n  ' + vigns + '\n  ' + sels +
       '\n  <label class="offrir-opt"><input type="checkbox" class="chk-offrir"><span>Offrir ce bijou</span><small>écrin, mot joint, prix masqué</small></label>\n  ' +
       (ring ? '<div class="achat-guide"><button class="lien-guide" type="button"><span>Quelle taille choisir' + NB + '?</span></button></div>\n  ' : '') +
-      '<p class="achat-prix">' + prix(p.price) + '</p>\n  ' + buy + '\n</div>';
+      buy + (rest || '') + '\n</div>';
+  }
+  /* THE BUY BUTTONS, one builder for the card, the price change and the state write (10 octobre, after the reviewer's finding :
+     a written state used to make the card "special" and freeze the piece in the studio). Pay + panier when priced, Demander le prix
+     otherwise ; vendue replaces them ; commande adds its line under them. */
+  function boutonsHTML(slug, price, etat, delai, pre){
+    pre = pre || '../../';
+    if (etat === 'vendue') return '<div class="achat-boutons achat-vendue"><p class="achat-etat">Pièce unique, vendue</p><a class="btn-panier btn-panier--plein" href="' + pre + 'sur-mesure/index.html">Commander une variation sur mesure</a></div>';
+    var b = price > 0
+      ? '<div class="achat-boutons"><button class="btn-pay" type="button">&#63743; Pay</button><button class="btn-panier" type="button" data-slug="' + slug + '">Ajouter au panier</button></div>'
+      : '<div class="achat-boutons"><a class="btn-panier btn-panier--plein" href="' + pre + 'nous-contacter/index.html">Demander le prix</a></div>';
+    if (etat === 'commande') b += '<p class="achat-etat">Réalisée à la commande à l’atelier' + (delai > 0 ? ', délai ' + delai + ' jours' : '') + '.</p>';
+    return b;
+  }
+  /* the state a page carries, read once from its html */
+  function etatDe(h){ if (/achat-boutons achat-vendue/.test(h)) return { etat: 'vendue', delai: 0 }; var m = /<p class="achat-etat">[^<]*?(\d+) jours?/.exec(h); return /class="achat-etat"/.test(h) ? { etat: 'commande', delai: m ? +m[1] : 0 } : { etat: 'disponible', delai: 0 }; }
+  /* what follows the buttons in a card (promises + panels), as the page has it */
+  function restOf(haut){ var i = haut.indexOf('<p class="achat-rassure">'); if (i < 0) i = haut.indexOf('<div class="fiche-accs">'); var e = haut.lastIndexOf('\n</div>'); return i < 0 || e < i ? '' : haut.slice(i, e); }
+  /* THE TEXTS OF A PIECE, where the page has them since 4 Oct: the sentence (achat-idee) and the collection under
+     the name, the description (acc-faits), the reference and the rows in the "Dans le detail" panel. A row keeps
+     its class (li-pierres). Everything else in the panels stays as written. */
+  var REF = /<p class="ref">Référence du produit[  ]:[  ]*([^<]*)<\/p>/;
+  var ROW = /<li(?: class="([^"]*)")?><span>([^<]*)<\/span>\s*([^<]*)<\/li>/g;
+  function rowsOf(h){ var ul = /<ul class="attributs">([\s\S]*?)<\/ul>/.exec(h), out = [], m; ROW.lastIndex = 0; if (ul) while ((m = ROW.exec(ul[1]))) out.push({ cls: m[1] || '', label: unesc(m[2]), value: unesc(m[3]).trim() }); return out; }
+  function setTexts(h, p){
+    var paras = p.description ? p.description.split('\n\n') : [], cls = { 'Pierres': 'li-pierres' };
+    rowsOf(h).forEach(function(r){ if (r.cls) cls[r.label] = r.cls; });
+    var idee = p.ligne ? '<p class="achat-idee">' + esc(p.ligne) + '</p>' : '', coll = COLLECTIONS[p.collection] ? '<p class="fiche-collection">Collection ' + esc(COLLECTIONS[p.collection]) + '</p>' : '';
+    h = h.replace(/(<div class="achat-tete">[\s\S]*?<\/p><\/div>)(?:<p class="achat-idee">[\s\S]*?<\/p>)?(?:<p class="fiche-collection">[^<]*<\/p>)?/, function(all, a){ return a + idee + coll; });
+    var faits = paras.map(function(x){ return '<p class="acc-faits">' + esc(x) + '</p>'; }).join('');
+    if (/<p class="acc-faits">/.test(h)) h = h.replace(/(?:<p class="acc-faits">[\s\S]*?<\/p>)+/, faits);
+    else h = h.replace(/(<div class="fiche-accs"><details[^>]*><summary>[^<]*<\/summary><div class="acc-corps">)/, '$1' + faits);
+    h = h.replace(REF, '');
+    if (p.reference) h = h.replace(/(<p class="ref lien-pierre">|<p class="ref">Une question)/, '<p class="ref">Référence du produit' + NB + ': ' + esc(p.reference) + '</p>$1');
+    h = h.replace(/<ul class="attributs">[\s\S]*?<\/ul>/, '<ul class="attributs">' + p.details.map(function(r){ return '<li' + (cls[r[0]] ? ' class="' + cls[r[0]] + '"' : '') + '><span>' + esc(r[0]) + '</span> ' + esc(r[1]) + '</li>'; }).join('') + '</ul>');
+    return h;
   }
 
   /* ---------- the page of a piece, on the frame of the pages that exist ---------- */
@@ -264,8 +306,8 @@ module.exports = function(cfg){
     var refSlug = Object.keys(P).filter(function(s){ return /<div class="modale" id="modale-tailles"/.test(read('piece/' + s + '/index.html')) && /class="lien-guide"/.test(read('piece/' + s + '/index.html')); })[0];
     var ref = read('piece/' + refSlug + '/index.html'), url = ORIGIN + '/piece/' + p.slug + '/', pre = '../../';
     var head = ref.slice(0, ref.indexOf('<main>')), tail = ref.slice(ref.indexOf('</main>'));
-    var modale = ref.slice(ref.indexOf('<div class="modale" id="modale-tailles"'), ref.indexOf('<section class="fiche-bas">'));
-    var accs = ref.slice(ref.indexOf('<div class="fiche-accs">'), ref.indexOf('</section>', ref.indexOf('<div class="fiche-accs">')));
+    var m0 = ref.indexOf('<div class="modale" id="modale-tailles"'), m1 = ref.indexOf('</div>\n</div>\n', m0) + '</div>\n</div>\n'.length, modale = ref.slice(m0, m1);
+    var accs = restOf(hautOf(ref).html);   /* the promises and the panels of the reference piece; its texts are replaced below */
     var title = p.name + ' | Alaya Fine Jewelry', desc = p.description || p.ligne || p.name, montures = p.montures.join(', ');
     function attr(v){ return esc(v); }
     var product = { '@context': 'https://schema.org', '@type': 'Product', name: p.name, description: [p.ligne, p.description].filter(Boolean).join(' '), url: url,
@@ -288,13 +330,11 @@ module.exports = function(cfg){
     if (n !== 2) throw new Error('page de référence inattendue');
 
     var rows = [['Monture', montures]].concat(p.details).filter(function(r){ return r[0] && r[1]; });
-    accs = accs.replace(/<ul class="attributs">[\s\S]*?<\/ul>/, '<ul class="attributs">' + rows.map(function(r){ return '<li><span>' + esc(r[0]) + '</span> ' + esc(r[1]) + '</li>'; }).join('') + '</ul>')
+    accs = setTexts(accs.replace(/<p class="ref lien-pierre">[\s\S]*?<\/p>/, ''), Object.assign({}, p, { details: rows }))
       .replace(/<p class="note-specs">[^<]*<\/p>/, '').replace('</ul></div></details>', '</ul>' + (rows.some(function(r){ return r[0] !== 'Monture'; }) ? '<p class="note-specs">Caratages, poids et dimensions donnés à titre indicatif.</p>' : '') + '</div></details>');
     var near = cardsOf(read(listFile(p.collection ? 'collections/' + p.collection : p.rayon))).filter(function(c){ return slugOf(c) !== p.slug; }).slice(0, 4)
       .map(function(c){ return c.replace(/(href|src)="(?:\.\.\/)+/g, '$1="' + pre).replace(' is-more', ''); }).join('');
-    var main = '<main>\n<section class="fiche-haut">\n  <div class="gal">' + galHTML(p.name, variants, pre) + '</div>\n  ' + achatHTML(p, variants, pre) + '\n</section>\n' + modale +
-      '<section class="fiche-bas">\n  <div class="fiche-texte">\n    ' + (p.ligne ? '<p class="fiche-ligne">' + esc(p.ligne) + '</p>' : '') + (p.description ? '<p>' + esc(p.description) + '</p>' : '') + '\n    ' +
-      (p.reference ? '<p class="ref">Référence du produit : ' + esc(p.reference) + '</p>' : '') + '\n    <p class="ref">Une question ? <a href="' + pre + 'nous-contacter/index.html">Contactez-nous</a></p>\n  </div>\n  ' + accs + '</section>\n' +
+    var main = '<main>\n<section class="fiche-haut">\n  <div class="gal">' + galHTML(p.name, variants, pre) + '</div>\n  ' + achatHTML(p, variants, pre, accs) + '\n</section>\n' + modale + '\n' +
       (near ? '<section class="apparentees"><h2>' + (p.collection ? 'Dans la même collection' : 'Dans le même rayon') + '</h2><div class="grid-results">' + near + '</div></section>\n' : '') +
       '<nav class="fil-bas"><a href="' + pre + 'toute-la-collection/index.html">Joaillerie</a><span class="sep">|</span><a href="' + pre + p.rayon + '/index.html">' + esc(RAYONS[p.rayon].replace('’', '\'')) + '</a><span class="sep">|</span><span>' + esc(p.name) + '</span></nav>\n';
     return head + main + tail;
@@ -442,17 +482,21 @@ module.exports = function(cfg){
     if (changed){ tx.write('langues.js', text); tx.langues = true; }
     return changed;
   }
+  /* what the site shows today for a French sentence: the studio's block first, else the site's own translations
+     (PHRASES, then the per-piece EN / IT lists merged in at the end of langues.js) */
+  function siteLangs(text){ var w = {}; require('vm').runInNewContext(text, { window: w }); return w.ALAYA_LANGUES.PHRASES || {}; }
   function translationsOf(frs){
-    var text = read('langues.js'), out = {};
-    ['en', 'it'].forEach(function(lang){ var map = studioBlock(text, lang).map; out[lang] = frs.map(function(fr){ return map[fr] || ''; }); });
+    var text = read('langues.js'), all = siteLangs(text), out = {};
+    ['en', 'it'].forEach(function(lang){ var map = studioBlock(text, lang).map, site = all[lang] || {}; out[lang] = frs.map(function(fr){ return fr ? map[fr] || site[fr] || '' : ''; }); });
     return out;
   }
   function setTranslations(tx, input, p){
     var pairs = [[p.ligne, 'ligne'], [p.description.split('\n\n')[0], 'description']].filter(function(x){ return x[0]; }), changed = false;
-    var text = read('langues.js');
+    var text = read('langues.js'), all = siteLangs(text);
     ['en', 'it'].forEach(function(lang){
-      var blk = studioBlock(text, lang), before = JSON.stringify(blk.map);
-      pairs.forEach(function(x){ var v = typo((input[lang] || {})[x[1]] || ''); if (v) blk.map[x[0]] = v; else delete blk.map[x[0]]; });
+      var blk = studioBlock(text, lang), before = JSON.stringify(blk.map), site = all[lang] || {};
+      /* a translation the site already shows for that sentence is not copied into the studio's block */
+      pairs.forEach(function(x){ var v = typo((input[lang] || {})[x[1]] || ''); if (v && (blk.map[x[0]] || typo(site[x[0]] || '') !== v)) blk.map[x[0]] = v; else delete blk.map[x[0]]; });
       if (JSON.stringify(blk.map) === before) return;
       text = putBlock(text, blk); changed = true;
     });
@@ -462,17 +506,17 @@ module.exports = function(cfg){
   /* ---------- an existing piece, read from its page ---------- */
   var GROUP = /<div class="gal-groupe" data-couleur="(\w*)" data-pierre="([^"]*)"(?: hidden)?>((?:<div class="gal-vue[^"]*"><img[^>]*><\/div>)+)<\/div>/g;
   function hautOf(h){ var a = h.indexOf('<section class="fiche-haut">'), b = h.indexOf('</section>', a); return a < 0 ? null : { a: a, b: b + '</section>'.length, html: h.slice(a, b + '</section>'.length) }; }
-  function hautHTML(p, variants){ return '<section class="fiche-haut">\n  <div class="gal">' + galHTML(p.name, variants, '../../') + '</div>\n  ' + achatHTML(p, variants, '../../') + '\n</section>'; }
+  function hautHTML(p, variants, rest){ return '<section class="fiche-haut">\n  <div class="gal">' + galHTML(p.name, variants, '../../') + '</div>\n  ' + achatHTML(p, variants, '../../', rest) + '\n</section>'; }
   function get(slug){
     var base = all().filter(function(x){ return x.slug === slug; })[0];
     if (!base) throw new Error('pi\u00e8ce inconnue');
-    var h = read('piece/' + slug + '/index.html');
-    var t = /<div class="fiche-texte">\s*(?:<p class="fiche-ligne">([\s\S]*?)<\/p>)?((?:<p>[\s\S]*?<\/p>)*)/.exec(h) || [], paras = [];
-    (t[2] || '').replace(/<p>([\s\S]*?)<\/p>/g, function(a, x){ paras.push(unesc(x)); });
-    var ref = /R\u00e9f\u00e9rence du produit : ([^<]*)</.exec(h), ul = /<ul class="attributs">([\s\S]*?)<\/ul>/.exec(h), details = [], re = /<li><span>([^<]*)<\/span>\s*([^<]*)<\/li>/g, m;
-    if (ul) while ((m = re.exec(ul[1]))) details.push([unesc(m[1]), unesc(m[2])]);
+    var h = read('piece/' + slug + '/index.html'), paras = [];
+    var idee = /<p class="achat-idee">([\s\S]*?)<\/p>/.exec(h);
+    h.replace(/<p class="acc-faits">([\s\S]*?)<\/p>/g, function(a, x){ paras.push(unesc(x)); });
+    var ref = REF.exec(h), details = rowsOf(h).map(function(r){ return [r.label, r.value]; }), m;
+    var t = [null, idee ? idee[1] : ''];
     var variants = [], g = /<div class="gal">([\s\S]*?)<\/div>\n  <div class="achat"/.exec(h);
-    if (g){ GROUP.lastIndex = 0; while ((m = GROUP.exec(g[1]))){ var first = /^<div class="gal-vue[^"]*"><img src="(?:\.\.\/)*([^"]+)"(?: alt="[^"]*")?([^>]*)><\/div>/.exec(m[3]); variants.push({ couleur: m[1], pierre: unesc(m[2]), image: first[1], attrs: first[2] || '', extra: m[3].slice(first[0].length) });   /* attrs: what else the photo's tag carries (the lighter phone versions), kept with the photo */ } }
+    if (g){ GROUP.lastIndex = 0; while ((m = GROUP.exec(g[1]))){ var first = /^<div class="gal-vue[^"]*"><img((?: [a-z-]+="[^"]*")*?) src="(?:\.\.\/)*([^"]+)"(?: alt="[^"]*")?([^>]*)><\/div>/.exec(m[3]); if (!first) throw new Error('galerie illisible sur ' + slug); variants.push({ couleur: m[1], pierre: unesc(m[2]), image: first[2], pre: first[1] || '', attrs: first[3] || '', extra: m[3].slice(first[0].length) });   /* pre and attrs: what else the photo's tag carries before and after its address (fetchpriority, the lighter phone versions), kept with the photo */ } }
     var axis = function(a){ var o = base.options.filter(function(x){ return x.a === a; })[0]; return o ? o.v : []; }, size = AXES[base.rayon];
     var p = Object.assign({}, base, { ligne: unesc(t[1] || ''), description: paras.join('\n\n'), reference: ref ? unesc(ref[1]).trim() : '', details: details, variants: variants,
       montures: axis('Monture'), sizes: size ? axis(size.a) : [] });
@@ -481,10 +525,11 @@ module.exports = function(cfg){
     var haut = hautOf(h);
     var arias = []; if (haut) haut.html.replace(/<button class="gal-vign[^>]*aria-label="([^"]*)"/g, function(a, x){ arias.push(unesc(x)); });
     variants.forEach(function(v, i){ if (arias[i]) v.aria = arias[i]; });
-    var vat = []; if (haut) haut.html.replace(/<button class="gal-vign[^>]*><img src="[^"]*" alt=""([^>]*)>/g, function(a, x){ vat.push(x); });
-    variants.forEach(function(v, i){ v.vattrs = vat[i] || ''; });   /* the thumbnail's own extra attributes, kept too */
+    var vat = []; if (haut) haut.html.replace(/<button class="gal-vign[^>]*><img src="[^"]*"([^>]*)>/g, function(a, x){ vat.push(x); });
+    variants.forEach(function(v, i){ v.vtail = vat[i] !== undefined ? vat[i] : ' alt=""'; });   /* the thumbnail's tag after its address (alt, the lighter versions), in the order the page has it */
+    var ed = etatDe(h); p.etat = ed.etat; p.delai = ed.delai;
     var flat = function(x){ return x.replace(/\s+/g, ' ').replace(/> </g, '><'); };
-    p.special = !haut || flat(hautHTML(p, variants)) !== flat(haut.html);
+    p.special = !haut || flat(hautHTML(p, variants, restOf(haut.html))) !== flat(haut.html);
     var tr = translationsOf([p.ligne, paras[0] || '']);
     p.en = { ligne: tr.en[0], description: tr.en[1] }; p.it = { ligne: tr.it[0], description: tr.it[1] };
     return p;
@@ -515,7 +560,7 @@ module.exports = function(cfg){
     var cur = get(slug), warnings = [];
     if (!cur.rayon) throw new Error('cette pi\u00e8ce ne se modifie pas ici');
     var name = typo(input.name || '') || cur.name, price = Math.max(0, Number(input.price) || 0);
-    var p = { slug: slug, name: name, price: price, rayon: RAYONS[input.rayon] ? input.rayon : cur.rayon, collection: input.collection === '' || COLLECTIONS[input.collection] ? input.collection : cur.collection,
+    var p = { slug: slug, name: name, price: price, etat: cur.etat, delai: cur.delai, rayon: RAYONS[input.rayon] ? input.rayon : cur.rayon, collection: input.collection === '' || COLLECTIONS[input.collection] ? input.collection : cur.collection,
       ligne: typo(input.ligne || ''), description: String(input.description || '').split(/\n\s*\n/).map(typo).filter(Boolean).join('\n\n'), reference: typo(input.reference || ''),
       details: (input.details || []).map(function(r){ return [typo(r[0] || ''), typo(r[1] || '')]; }).filter(function(r){ return r[0] && r[1]; }),
       filtres: (input.filtres || []).map(function(f){ return typo(f); }).filter(Boolean), fiancailles: !!input.fiancailles, mariage: !!input.mariage };
@@ -534,13 +579,19 @@ module.exports = function(cfg){
           if (ph.data) return { couleur: ph.couleur, pierre: typo(ph.pierre || 'Diamant'), image: files[k++], extra: '' };
           var old = cur.variants.filter(function(v){ return v.image === ph.image; })[0];
           if (!old) throw new Error('photo ' + (i + 1) + ' : image inconnue');
-          return { couleur: ph.couleur, pierre: typo(ph.pierre || 'Diamant'), image: old.image, attrs: old.attrs, vattrs: old.vattrs, extra: old.extra, aria: old.couleur === ph.couleur && old.pierre === typo(ph.pierre || 'Diamant') ? old.aria : '' };
+          return { couleur: ph.couleur, pierre: typo(ph.pierre || 'Diamant'), image: old.image, pre: old.pre, attrs: old.attrs, vtail: old.vtail, extra: old.extra, aria: old.couleur === ph.couleur && old.pierre === typo(ph.pierre || 'Diamant') ? old.aria : '' };
         });
         var montures = (input.montures || []).filter(function(v){ return MONTURES.some(function(m){ return m.value === v; }); });
         var pierres = variants.map(function(v){ return v.pierre; }).filter(function(v, i, a){ return a.indexOf(v) === i; }), sizes = (input.sizes || []).map(function(v){ return typo(v); }).filter(Boolean);
         /* the choices keep the order and the names the fiche already has; a new one takes the usual place */
         var was = cur.options.filter(function(o){ return isVariantAxis(o.a); })[0] || { a: 'Pierre principale', l: 'Choisir la pierre' }, made = [];
         if (montures.length > 1) made.push({ a: 'Monture', l: 'Choisir une monture', v: montures });
+        /* the stones the card already offers keep their order, even one with no photo of its own; a stone appears only
+           with the photos of a new stone and leaves only with the last photo it had */
+        var had = cur.variants.map(function(v){ return v.pierre; }), offered = (was.v || []).map(function(v){ return pierreOf(was, v, cur.variants); });
+        var kept = offered.filter(function(x){ return pierres.indexOf(x) >= 0 || had.indexOf(x) < 0; });
+        pierres = kept.concat(pierres.filter(function(x){ return kept.indexOf(x) < 0 && had.indexOf(x) < 0; }));
+        if (!was.v) pierres = variants.map(function(v){ return v.pierre; }).filter(function(v, i, a){ return a.indexOf(v) === i; });
         if (pierres.length > 1) made.push({ a: was.a, l: was.l, v: pierres.map(function(x){ return valueOf(was.a, x); }) });
         if (AXES[p.rayon] && sizes.length) made.push({ a: AXES[p.rayon].a, l: AXES[p.rayon].l, v: sizes });
         var rank = function(o){ var i = cur.options.map(function(x){ return x.a; }).indexOf(o.a); return i < 0 ? 100 + made.indexOf(o) : i; };
@@ -562,23 +613,23 @@ module.exports = function(cfg){
           if (d['@type'] === 'BreadcrumbList'){ var it = d.itemListElement; it[it.length - 1].name = name; if (it.length === 3){ it[1].name = RAYONS[p.rayon].replace('\u2019', '\''); it[1].item = ORIGIN + '/' + p.rayon + '/'; } return ld(d); }
           if (d['@type'] !== 'Product') return all;
           d.name = name; if (p.ligne !== typo(cur.ligne) || p.description !== cur.description.split(/\n\s*\n/).map(typo).filter(Boolean).join('\n\n')) d.description = [p.ligne].concat(paras).filter(Boolean).join(' '); d.image = [ORIGIN + '/' + p.image];
-          var mont = p.details.filter(function(r){ return r[0] === 'Monture'; })[0]; if (mont) d.material = mont[1]; else delete d.material;
+          var row = function(ds){ var r = ds.filter(function(r){ return r[0] === 'Monture'; })[0]; return r ? typo(r[1]) : ''; }, mont = row(p.details);
+          if (mont !== row(cur.details)){ if (mont) d.material = mont; else delete d.material; }   /* the material follows the Monture row only when that row is edited */
           if (p.reference) d.sku = p.reference;
           if (price > 0) d.offers = { '@type': 'Offer', price: String(Math.round(price)), priceCurrency: 'EUR', availability: 'https://schema.org/InStock', url: url, seller: { '@type': 'Organization', name: 'Alaya Fine Jewelry' }, itemCondition: 'https://schema.org/NewCondition' };
           else delete d.offers;
           return ld(d);
         });
         var haut = hautOf(h);
-        if (rewrite) h = h.slice(0, haut.a) + hautHTML(p, variants) + h.slice(haut.b);
+        if (rewrite) h = h.slice(0, haut.a) + hautHTML(p, variants, restOf(haut.html)) + h.slice(haut.b);
         else {
           var block = haut.html.replace(/( data-img=")[^"]*(")/, '$1' + p.image + '$2').replace(/(<h1>)[^<]*(<\/h1>)/, '$1' + esc(name) + '$2').replace(/( data-nom=")[^"]*(")/, '$1' + esc(name) + '$2').replace(/( data-prix=")[^"]*(")/, '$1' + pyFloat(price) + '$2')
             .replace(/(<p class="achat-prix">)[^<]*(<\/p>)/, '$1' + prix(price) + '$2').split('alt="' + esc(cur.name)).join('alt="' + esc(name));
           h = h.slice(0, haut.a) + block + h.slice(haut.b);
         }
-        h = h.replace(/(<div class="fiche-texte">\s*)(?:<p class="fiche-ligne">[\s\S]*?<\/p>)?(?:<p>[\s\S]*?<\/p>)*/, function(all, a){ return a + (p.ligne ? '<p class="fiche-ligne">' + esc(p.ligne) + '</p>' : '') + paras.map(function(x){ return '<p>' + esc(x) + '</p>'; }).join(''); });
-        h = h.replace(/\s*<p class="ref">R\u00e9f\u00e9rence du produit : [^<]*<\/p>/, '');
-        if (p.reference) h = h.replace(/(\s*)(<p class="ref">Une question)/, '$1<p class="ref">R\u00e9f\u00e9rence du produit : ' + esc(p.reference) + '</p>$1$2');
-        h = h.replace(/<ul class="attributs">[\s\S]*?<\/ul>/, '<ul class="attributs">' + p.details.map(function(r){ return '<li><span>' + esc(r[0]) + '</span> ' + esc(r[1]) + '</li>'; }).join('') + '</ul>');
+        /* 10 octobre : a price that appears or disappears swaps the buttons too (Pay + panier, or Demander le prix), the written state kept */
+        if ((cur.price > 0) !== (price > 0) && cur.etat !== 'vendue') h = h.replace(/<div class="achat-boutons[^"]*">[\s\S]*?<\/div>(<p class="achat-etat">[^<]*<\/p>)?/, function(){ return boutonsHTML(slug, price, cur.etat, cur.delai); });
+        h = setTexts(h, p);
         h = h.replace(/(<nav class="fil-bas">[\s\S]*?<span class="sep">\|<\/span>)<a href="[^"]*">[^<]*<\/a>(<span class="sep">\|<\/span><span>)[^<]*(<\/span><\/nav>)/, '$1<a href="../../' + p.rayon + '/index.html">' + esc(RAYONS[p.rayon].replace('\u2019', '\'')) + '</a>$2' + esc(name) + '$3');
         return h;
       });
@@ -617,6 +668,55 @@ module.exports = function(cfg){
     } catch (e){ tx.rollback(); throw e; }
   }
 
-  return { all: all, vocab: vocab, syncPaiement: syncPaiement, py0: py0, aliasPhrases: aliasPhrases, get: get, update: update, remove: remove, hautHTML: hautHTML, add: add, setSections: setSections, undo: undo, lastSave: lastSave, slugify: slugify,
+
+  /* ---------- A COLLECTION (10 octobre) : a new page cloned from the first collection of the site, emptied, named ;
+     its line in the Collections column of the menu and in the phone menu of every page ; its line in sitemap.xml. ---------- */
+  function addCollection(name){
+    var n = typo(name), slug = slugify(n);
+    if (!n || !slug) throw new Error('il faut un nom de collection');
+    if (COLLECTIONS[slug] || fs.existsSync(file('collections/' + slug))) throw new Error('cette collection existe déjà : ' + slug);
+    var model = Object.keys(COLLECTIONS)[0]; if (!model) throw new Error('aucune collection modèle sur le site');
+    var tx = begin('collection ' + slug), today = new Date().toISOString().slice(0, 10);
+    try {
+      var old = COLLECTIONS[model], h = read('collections/' + model + '/index.html');
+      h = rebuild(h, function(){ return []; });
+      h = h.split(ORIGIN + '/collections/' + model + '/').join(ORIGIN + '/collections/' + slug + '/');
+      h = h.replace(/<title>[^<|]*\|/, '<title>' + esc(n) + ' |').replace(/(<meta property="og:title" content=")[^"|]*\|/, '$1' + esc(n) + ' |');
+      h = h.replace(/(<meta name="description" content=")[^"]*(")/, '$1' + esc('La collection ' + n + ' d’Alaya Fine Jewelry : des bijoux en or 750 ‰ dessinés et réalisés à l’atelier.') + '$2');
+      h = h.split('"name": ' + JSON.stringify(old)).join('"name": ' + JSON.stringify(n));
+      h = h.replace(/(<nav class="breadcrumb">[\s\S]*?<span>)[^<]*(<\/span>\s*<\/nav>)/, '$1' + esc(n) + '$2');
+      h = h.replace(/<h1>[^<]*<span class="count">\(\d+\)<\/span><\/h1>/, '<h1>' + esc(n) + ' <span class="count">(0)</span></h1>');
+      tx.write('collections/' + slug + '/index.html', h);
+      var li = /(<a href="((?:\.\.\/)*)collections\/[a-z0-9-]+\/index\.html">[^<]*(<span class="n">\d+<\/span>)?<\/a><\/li>)(?=<\/ul>)/g;
+      htmlFiles().forEach(function(rel){ tx.update(rel, function(x){ return x.replace(li, function(all, last, pre, withCount){ return last + '<li><a href="' + pre + 'collections/' + slug + '/index.html">' + esc(n) + (withCount ? ' <span class="n">0</span>' : '') + '</a></li>'; }); }); });
+      tx.update('sitemap.xml', function(x){ var line = '<url><loc>' + ORIGIN + '/collections/' + slug + '/</loc><lastmod>' + today + '</lastmod><priority>0.7</priority></url>'; var at = x.indexOf('<url><loc>' + ORIGIN + '/collections/' + model + '/</loc>'); if (at < 0) return x.replace('</urlset>', line + '\n</urlset>'); var end = x.indexOf('</url>', at) + 6; return x.slice(0, end) + '\n' + line + x.slice(end); });
+      COLLECTIONS[slug] = n; LISTS.push('collections/' + slug);
+    } catch (e){ tx.rollback(); throw e; }
+    return { slug: slug, name: n };
+  }
+
+  /* ---------- THE STATE OF A PIECE ON ITS PAGE (10 octobre, the states that sell) : available (the buying buttons), sold (a unique piece
+     stays online, marked sold, its button leads to the made-to-measure page), made to order (the lead time under the buttons). ---------- */
+  var ETAT_CSS = '\n/* 10 octobre 2026 : l’état d’une pièce, écrit par le studio */\n.achat-etat { margin: 14px 0 0; font-size: var(--fs-body-s); color: var(--ink-soft); text-align: center; }\n.achat-boutons.achat-vendue { grid-template-columns: 1fr; }\n.achat-boutons.achat-vendue .achat-etat { margin: 0 0 10px; font-size: var(--fs-body-m); color: var(--ink); letter-spacing: .08em; text-transform: uppercase; }\n';
+  function etatDelai(slug){ var h; try { h = read('piece/' + slug + '/index.html'); } catch (e){ return { etat: '', delai: 0 }; } return etatDe(h); }
+  function etatOf(slug){ return etatDelai(slug).etat; }
+  function delaiOf(slug){ return etatDelai(slug).delai; }
+  function setEtat(slug, etat, delai){
+    var p = all().filter(function(x){ return x.slug === slug; })[0]; if (!p) throw new Error('pièce inconnue : ' + slug);
+    if (['disponible', 'vendue', 'commande'].indexOf(etat) < 0) throw new Error('état inconnu');
+    var rel = 'piece/' + slug + '/index.html', tx = begin('etat ' + slug + ' ' + etat);
+    try {
+      tx.update(rel, function(h){
+        var boutons = boutonsHTML(slug, p.price, etat, delai);
+        var out = h.replace(/<div class="achat-boutons[^"]*">[\s\S]*?<\/div>(<p class="achat-etat">[^<]*<\/p>)?/, function(){ return boutons; });
+        if (out === h) throw new Error('les boutons d’achat de cette page ne se lisent pas');
+        return out;
+      });
+      if (read('style.css').indexOf('.achat-etat') < 0){ tx.update('style.css', function(c){ return c + ETAT_CSS; }); tx.css = true; refreshSite(tx); }
+    } catch (e){ tx.rollback(); throw e; }
+    return { slug: slug, etat: etat, delai: delai || 0 };
+  }
+
+  return { all: all, vocab: vocab, addCollection: addCollection, etatOf: etatOf, delaiOf: delaiOf, setEtat: setEtat, syncPaiement: syncPaiement, py0: py0, aliasPhrases: aliasPhrases, get: get, update: update, remove: remove, hautHTML: hautHTML, add: add, setSections: setSections, undo: undo, lastSave: lastSave, slugify: slugify,
            /* for the checks */ rebuild: rebuild, LISTS: LISTS, listFile: listFile, read: read, htmlFiles: htmlFiles, refreshSite: refreshSite, begin: begin };
 };

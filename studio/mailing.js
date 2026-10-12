@@ -24,7 +24,7 @@ var RSTATUS = { queued: 'en file', sent: 'parti', failed: 'échec', skipped: 'sa
 
 ST.menu('Mailing', [
   { label: 'Contacts', key: 'contacts' }, { label: 'Nouvel envoi', key: 'envoi' }, { label: 'Envois', key: 'envois' },
-  { group: 'Réglages' }, { label: 'Boîte d’envoi', key: 'mail-boite' }, { label: 'Désinscrits', key: 'mail-desinscrits' }
+  { group: 'Réglages' }, { label: 'Désinscrits', key: 'mail-desinscrits' }
 ]);
 
 function when(iso){ if (!iso) return ''; var d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) + ', ' + d.toTimeString().slice(0, 5); }
@@ -44,7 +44,7 @@ function screen(draw){
 }
 /* a section: its title in serif, a line beside it, and what follows */
 function block(host, title, count){ var b = node('div', 'block', host), h = node('div', 'sec', b); node('h3', '', h, title); var c = node('span', 'count', h, count || ''); b.head = h; b.count = c; return b; }
-function table(box, heads){ var w = node('div', 'tablewrap inner scroll', box), t = node('table', 'table', w), hr = node('tr', '', node('thead', '', t)); heads.forEach(function(x){ node('th', '', hr, x); }); return node('tbody', '', t); }
+function table(box, heads){ var w = node('div', 'tablewrap inner scroll', box), t = node('table', 'table', w), hr = node('tr', '', node('thead', '', t)); heads.forEach(function(x){ if (Array.isArray(x)) ST.th(hr, x[0], x[1]); else node('th', '', hr, x); }); return node('tbody', '', t); }
 /* a field of a form: the label above, the hint under (the studio's .fields.sender) */
 function fieldRow(box, label, value, opts){
   opts = opts || {};
@@ -81,10 +81,12 @@ ST.register('contacts', screen(function(host, again){
   };
   if (none){ adder(); return; }
   var b = block(host, 'La liste', plural(D.reach, 'personne recevra', 'personnes recevront') + ' le prochain envoi');
-  var tb = table(b, ['Adresse', 'Nom', 'Ajouté le', '', '']);
+  var tb = table(b, [['Adresse', 'mail'], ['Nom', 'client'], ['Ajouté le', 'date'], '', '', '']);
   D.contacts.forEach(function(c){
-    var tr = node('tr', 'plain', tb); node('td', 'first', tr, c.email); node('td', 'mute', tr, c.name || ''); node('td', 'mute', tr, when(c.addedAt));
+    var tr = node('tr', 'plain', tb), f = node('td', 'first', tr); ST.avatar(c.name || c.email, f); f.appendChild(document.createTextNode(c.email)); node('td', 'mute', tr, c.name || ''); node('td', 'mute', tr, when(c.addedAt));
     var t1 = node('td', 'mute', tr), t2 = node('td', 'door', tr);
+    ST.rowMenu(tr, function(){ return [{ label: 'Le client', icon: 'client', run: function(){ sessionStorage.setItem('alaya-client-open', c.email); ST.open('clients'); } }, { label: 'Copier l’adresse', icon: 'copy', run: function(){ ST.copy(c.email); } }, { label: 'Écrire un mail', icon: 'mail', href: 'mailto:' + c.email }]
+      .concat(admin() ? ['-', out[c.email] ? { label: 'Réinscrire', icon: 'check', run: function(){ api('mailing/suppressions?email=' + encodeURIComponent(c.email), { method: 'DELETE' }).then(again); } } : { label: 'Désinscrire', icon: 'tag', run: function(){ api('mailing/suppressions', { method: 'POST', json: { email: c.email } }).then(again); } }, { label: 'Retirer de la liste', icon: 'trash', danger: true, run: function(){ if (confirm('Retirer ' + c.email + ' de la liste ?')) api('mailing/contacts?email=' + encodeURIComponent(c.email), { method: 'DELETE' }).then(again); } }] : []); }, c.name || c.email);
     if (out[c.email]) node('span', 'chip', t1, out[c.email]);
     else if (admin()){ var ub = node('button', 'btn small', t1, 'Désinscrire'); ub.addEventListener('click', function(){ api('mailing/suppressions', { method: 'POST', json: { email: c.email } }).then(function(r){ toast(r.ok ? c.email + ' ne recevra plus rien.' : err(r), !r.ok); again(); }); }); }
     if (admin()){ var x = node('button', 'sign x', t2, '×'); x.title = 'Retirer de la liste'; x.setAttribute('aria-label', 'Retirer ' + c.email); x.addEventListener('click', function(){ if (!confirm('Retirer ' + c.email + ' de la liste ?')) return; api('mailing/contacts?email=' + encodeURIComponent(c.email), { method: 'DELETE' }).then(again); }); }
@@ -157,6 +159,9 @@ function pickPieces(then){
 ST.register('envoi', screen(function(host, again){
   var can = D.sender.configured, isAdmin = admin();
   ST.count(plural(D.reach, 'destinataire', 'destinataires'));
+  var fromPieces = (sessionStorage.getItem('alaya-mail-pieces') || sessionStorage.getItem('alaya-mail-piece') || '').split(',').filter(Boolean), put = 0; sessionStorage.removeItem('alaya-mail-piece'); sessionStorage.removeItem('alaya-mail-pieces');
+  fromPieces.forEach(function(sl){ if (draft.pieces.indexOf(sl) < 0 && draft.pieces.length < 12){ draft.pieces.push(sl); put++; } });
+  if (put){ if (isAdmin) api('mailing/draft', { method: 'PUT', json: draft }); toast(put > 1 ? put + ' pièces sont dans le mail.' : 'La pièce est dans le mail.'); }
   var wrap = node('div', 'nlcompose', host), left = node('div', 'nlleft', wrap), right = node('div', 'nlright', wrap);
   var changed = function(){ clearTimeout(saveTimer); saveTimer = setTimeout(function(){ if (isAdmin) api('mailing/draft', { method: 'PUT', json: draft }); preview(); }, 500); };
 
@@ -239,7 +244,7 @@ ST.register('envois', screen(function(host, again){
       var x = r.body, parts = [plural(x.read, 'retour lu', 'retours lus'), plural(x.bounced.length, 'adresse en échec', 'adresses en échec') + (x.bounced.length ? ' (' + x.bounced.join(', ') + ')' : '')];
       if (x.delayed) parts.push(x.delayed + ' simple' + (x.delayed > 1 ? 's' : '') + ' retard' + (x.delayed > 1 ? 's' : '')); if (x.already) parts.push(x.already + ' déjà lu' + (x.already > 1 ? 's' : '')); if (x.unknown) parts.push(x.unknown + ' pour une adresse hors de nos envois'); if (x.unreadable) parts.push(x.unreadable + ' illisible' + (x.unreadable > 1 ? 's' : ''));
       lastBounces = parts.join(', ') + '.'; toast(lastBounces); again(); }); }); }
-  var tb = table(b, ['Envoi', 'Résultat'].concat(figures ? ['Ouverts', 'Cliqués', 'Désinscrits'] : [], ['État'])), detail = node('div', 'nldetail', host), live = false;
+  var tb = table(b, [['Envoi', 'mail'], ['Résultat', 'status']].concat(figures ? [['Ouverts', 'number'], ['Cliqués', 'number'], ['Désinscrits', 'number']] : [], [['État', 'status']])), detail = node('div', 'nldetail', host), live = false;
   D.campaigns.forEach(function(c){
     var st = c.stats || {}, tr = node('tr', '', tb), stuck = (c.status === 'queued' || c.status === 'sending' || c.status === 'paused') && st.queued > 0 && !D.draining, bad = (st.failed || 0) + (st.bounced || 0);
     if ((c.status === 'queued' || c.status === 'sending') && D.draining) live = true;
@@ -277,11 +282,11 @@ ST.register('envois', screen(function(host, again){
 /* ---------- 4. Boite d'envoi (Instinct's Sender box) ---------- */
 ST.register('mail-boite', screen(function(host, again){
   var s = D.sender; ST.count(!s.user ? 'Pas encore renseignée' : (!s.passSet ? 'Mot de passe manquant' : 'Prête'));
-  node('p', 'lead', host, 'La boîte d’où partent vos mails. Pour un Gmail ou un Google Workspace, il faut son adresse et un mot de passe d’application : seize lettres que Google fabrique pour un seul programme, à créer sur myaccount.google.com/apppasswords une fois la validation en deux étapes activée. Ce n’est pas le mot de passe du compte, et il se révoque d’un clic. Les serveurs et les ports sont déjà remplis pour Gmail ; pour une autre boîte, ce sont ceux que donne son hébergeur.');
+  node('p', 'lead', host, 'L’adresse d’où partent les mails, et son mot de passe d’application.');
   var b = block(host, 'La boîte', ''), fs = node('div', 'fields sender', b);
   var user = fieldRow(fs, 'Adresse', s.user, { half: true, type: 'email', placeholder: 'contact@alayafinejewelry.com', hint: 'Les mails partent de cette adresse.' });
   var name = fieldRow(fs, 'Nom affiché', s.name, { half: true, placeholder: 'Alaya Fine Jewelry', hint: 'Ce que la personne lit comme expéditeur.' });
-  var pass = fieldRow(fs, 'Mot de passe d’application', '', { type: 'password', autocomplete: 'new-password', placeholder: s.passSet ? '••••••••••••••••' : 'abcd efgh ijkl mnop', hint: (s.passSet ? 'Un mot de passe est enregistré : laissez vide pour le garder. ' : 'Les espaces sont ignorés. ') + 'Il est gardé sur ce Mac et ne revient jamais à l’écran.' });
+  var pass = fieldRow(fs, 'Mot de passe d’application', '', { type: 'password', autocomplete: 'new-password', placeholder: s.passSet ? '••••••••••••••••' : 'abcd efgh ijkl mnop', hint: (s.passSet ? 'Un mot de passe est enregistré : laissez vide pour le garder. ' : '') + 'Gmail : myaccount.google.com/apppasswords, avec la validation en deux étapes. Pas le mot de passe du compte.' });
   var b2 = block(host, 'Les serveurs', 'Déjà remplis pour Gmail.'), fs2 = node('div', 'fields sender', b2);
   var hostI = fieldRow(fs2, 'Serveur d’envoi', s.host, { half: true, placeholder: 'smtp.gmail.com' });
   var port = fieldRow(fs2, 'Port d’envoi', String(s.port), { half: true, placeholder: '587', hint: '587 ou 465.' });
@@ -297,9 +302,7 @@ ST.register('mail-boite', screen(function(host, again){
 /* ---------- 5. Desinscrits (Instinct's Unsubscribed) ---------- */
 ST.register('mail-desinscrits', screen(function(host, again){
   ST.count(D.suppressions.length ? plural(D.suppressions.length, 'adresse', 'adresses') : '');
-  node('p', 'lead', host, 'Les adresses auxquelles on n’écrit plus. Chaque mail porte la ligne « Ne plus recevoir ces mails ». ' + (D.tracking
-    ? 'Elle ouvre une page de désinscription : la personne confirme, son adresse arrive ici toute seule.'
-    : 'Tant que le studio tourne sur ce Mac, elle ouvre un mail vers la boîte d’envoi, objet Désinscription : quand un tel mail arrive, ajoutez l’adresse ici.') + ' La liste est relue avant chaque envoi.');
+  node('p', 'lead', host, 'Les adresses auxquelles on n’écrit plus.' + (D.tracking ? '' : ' Un mail « Désinscription » dans la boîte d’envoi : l’adresse s’ajoute ici.'));
   if (admin()){
     var a = block(host, 'Désinscrire une adresse', ''), tl = node('div', 'tryline', a), lb = node('label', '', tl, 'Adresse'); lb.htmlFor = 'mf-desinscrire';
     var inp = node('input', '', tl); inp.id = 'mf-desinscrire'; inp.type = 'email'; inp.placeholder = 'nom@exemple.fr';

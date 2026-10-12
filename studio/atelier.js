@@ -22,7 +22,7 @@ var MENU = [
   { group: 'Production' }, { label: 'Productions', key: 'productions' }, { label: 'Certificats de bijoux', key: 'cert-bijoux' }, { label: 'Certificats de gemmes', key: 'cert-gemmes' }, { label: 'Certificats de diamants', key: 'cert-diamants' }, { label: 'Fonderie', key: 'founders' },
   { group: 'Documents' }, { label: 'Rapports de revenus', key: 'incomes' }, { label: 'Devis', key: 'devis' }, { label: 'Transport', key: 'transports' }, { label: 'Bons de livraison', key: 'livraisons' }, { label: 'Factures', key: 'factures' },
   { group: 'Archives' }, { label: 'Ce qui a été supprimé', key: 'archives', admin: true },
-  { group: 'Réglages' }, { label: 'Cours de l’or', key: 'or', admin: true }, { label: 'Agenda', key: 'events' }, { label: 'Maison', key: 'maison', admin: true }
+  { group: 'Réglages' }, { label: 'Cours du jour', key: 'or', admin: true }, { label: 'Agenda', key: 'events' }
 ];
 /* what an account may not see is not offered to it (his sidebar hid what a user had no permission for) */
 function setMenu(){
@@ -40,8 +40,13 @@ function fieldsOf(t){ return t.groups.reduce(function(a, g){ return a.concat(g[1
 function vendorName(id){ var v = (A.records.vendors || []).filter(function(x){ return x.id === id; })[0]; return v ? v.fullName : ''; }
 function goldNow(){ return A.gold && A.gold[0] ? A.gold[0].price : 0; }
 function printUrl(type, r){ return '../api/atelier/' + type + '/' + r.id + '/document'; }
+function pdfUrl(type, r){ return '../api/atelier/' + type + '/' + r.id + '/pdf'; }
+/* the VAT of the house, as the document prints it : empty = prices without VAT */
+function vatRate(){ var n = Number(String((A && A.maison && A.maison.vatRate) || '').replace(',', '.')); return n > 0 ? n : 0; }
 function empty(host, title, line){ var em = node('div', 'empty', host); node('b', '', em, title); if (line) node('span', 'sub', em, line); return em; }
-function tableOf(host, heads){ var wrap = node('div', 'tablewrap inner', host), table = node('table', 'table', wrap), hr = node('tr', '', node('thead', '', table)); heads.forEach(function(h){ node('th', '', hr, h); }); return node('tbody', '', table); }
+function tableOf(host, heads){ var wrap = node('div', 'tablewrap inner', host), table = node('table', 'table', wrap), hr = node('tr', '', node('thead', '', table)); heads.forEach(function(h){ if (Array.isArray(h)) ST.th(hr, h[0], h[1]); else node('th', '', hr, h); }); return node('tbody', '', table); }
+/* the kind of a column, from the field it shows: a date, a sum, a yes/no, a number, a text */
+function kindOf(t, c){ if (c[2] === 'money') return 'money'; if (c[2] === 'date' || c[0] === 'date') return 'date'; var f = fieldsOf(t).filter(function(x){ return x[0] === c[0]; })[0]; var k = f ? f[2] : ''; return k === 'number' || k === 'calc' ? 'number' : (k === 'check' ? 'bool' : (k === 'photo' ? 'image' : (k === 'vendor' ? 'client' : 'text'))); }
 function chip(box, label, on, change, kind, name){ var l = node('label', 'option-row', box), c = node('input', '', l); c.type = kind || 'checkbox'; if (name) c.name = name; c.checked = !!on; node('span', '', l, label); c.addEventListener('change', function(){ change(c.checked); }); return c; }
 function select(box, label, options, value, change){ var se = node('select', '', box); se.setAttribute('aria-label', label); options.forEach(function(o){ node('option', '', se, o[1]).value = o[0]; }); se.value = value; se.addEventListener('change', function(){ change(se.value); }); return se; }
 
@@ -67,7 +72,7 @@ function costs(V){
 }
 function localTotal(q){ var gain = Number(q.gainPercentage) || 0, g = 1 + gain / 100; return (q.items || []).reduce(function(s, it){
   var unit = it.product ? round3(round3(Number(currentCost(it.product, it.goldValue === '' || it.goldValue === undefined ? goldNow() : it.goldValue, N(it.price))) * (1 + gain * 0.01))) : N(it.price) * g;
-  return s + Math.round(N(it.quantity) * unit * 100) / 100; }, 0); }
+  return s + Math.round(N(it.quantity) * unit * 100) / 100; }, 0) * (1 + vatRate() / 100); }
 
 /* what a column or a summary line shows: the record's value, said the way the form says it */
 function say(f, v){
@@ -111,11 +116,11 @@ function listScreen(type, opts){
       if (!opts.key){ var cg = node('span', 'checks', bar); chip(cg, 'Afficher les coûts', u.costs, function(on){ u.costs = on; ST.redraw(); }); }
     }
     if (type === 'founders') select(bar, 'Mode de paiement', [['', 'Paiement : tous']].concat(A.pay), u.pay, function(v){ u.pay = v; u.page = 0; fill(); });
-    var del = node('button', 'btn danger push', bar, ''); del.hidden = true;
+    var del = node('button', 'btn danger push', bar, ''); del.hidden = true; if (!A.admin) del.style.display = 'none';
     if (canNew) newBtn(bar, 'btn primary' + (del ? '' : ''));
     del.addEventListener('click', function(){ var ids = Object.keys(u.picked); if (!ids.length || !confirm('Supprimer ' + ids.length + ' ' + t.one.toLowerCase() + (ids.length > 1 ? 's' : '') + ' ? Ils iront dans les archives.')) return;
       ids.reduce(function(p, id){ return p.then(function(){ return api('atelier/' + type + '/' + id, { method: 'DELETE' }); }); }, Promise.resolve()).then(function(){ u.picked = {}; toast('Supprimé, rangé dans les archives.'); refresh(); }); });
-    var heads = (t.write && !opts.noPick ? [''] : []).concat(['N°']).concat(cols.map(function(c){ return c[1]; })).concat(t.money ? ['Total'] : []).concat(opts.extraHead || []).concat(['']);
+    var heads = (t.write && !opts.noPick ? [''] : []).concat([['N°', 'number']]).concat(cols.map(function(c){ return [c[1], kindOf(t, c)]; })).concat(t.money ? [['Total', 'money']] : []).concat((opts.extraHead || []).map(function(h){ return [h, 'number']; })).concat(['', '']);
     tb = tableOf(host, heads); pager = node('div', 'marks atl-pager', host);
     var fill = function(){
       tb.innerHTML = ''; pager.innerHTML = ''; var q = u.q.trim().toLocaleLowerCase();
@@ -133,14 +138,28 @@ function listScreen(type, opts){
         var r = x.r, tr = node('tr', opts.rowClass ? opts.rowClass(r) : '', tb);
         if (t.write && !opts.noPick){ var pc = node('td', 'atl-pick', tr), ck = node('input', '', pc); ck.type = 'checkbox'; ck.checked = !!u.picked[r.id]; ck.setAttribute('aria-label', 'Choisir ' + x.cells[0]); ck.addEventListener('click', function(e){ e.stopPropagation(); }); ck.addEventListener('change', function(){ if (ck.checked) u.picked[r.id] = 1; else delete u.picked[r.id]; mark(); }); }
         node('td', 'first', tr, x.cells[0]);
-        cols.forEach(function(c, i){ var d = node('td', i ? 'mute' : '', tr, x.cells[i + 1]); if (!i && isProd && A.sold[r.id]) node('span', 'chip on', d, 'Vendu').style.marginLeft = '10px'; });
+        /* 10 octobre (Raouf : like the Pièces list) : the photo beside the name, its own or the linked site piece's */
+        cols.forEach(function(c, i){ var d = node('td', i ? 'mute' : '', tr, ''); if (!i){ var src = imageSrc(r); if (src){ var th = node('span', 'th sq', d), im = node('img', '', th); im.alt = ''; im.loading = 'lazy'; im.src = src; im.addEventListener('error', function(){ th.remove(); }); } node('span', 'cell', d, x.cells[i + 1]); } else d.textContent = x.cells[i + 1]; if (!i && isProd && A.sold[r.id]) node('span', 'chip on', d, 'Vendu').style.marginLeft = '10px'; });
         if (t.money) node('td', 'num', tr, euros(r.total));
         if (opts.extraCell) opts.extraCell(tr, r);
-        var door = node('td', 'door', tr); if (!t.noDoc){ var a = node('a', 'btn small', door, 'Imprimer ↗'); a.href = printUrl(type, r); a.target = '_blank'; a.rel = 'noopener'; a.addEventListener('click', function(e){ e.stopPropagation(); }); }
+        /* the actions as icons at the end of the row (his Action column) : open, print, PDF, the label, the certificates */
+        var door = node('td', 'door', tr), ico = function(name, title, href, run){ var el = node(href ? 'a' : 'button', 'ibtn', door); el.title = title; el.setAttribute('aria-label', title); el.appendChild(ST.svg(name)); if (href){ el.href = href; el.target = '_blank'; el.rel = 'noopener'; } else el.type = 'button'; el.addEventListener('click', function(e){ e.stopPropagation(); if (run) run(); }); return el; };
+        ico('open', 'Ouvrir', null, function(){ open(type, r); });
+        if (!t.noDoc){ ico('print', 'Imprimer le document', printUrl(type, r)); ico('print', 'Télécharger le PDF', pdfUrl(type, r)).classList.add('pdf'); }
+        if (isProd){ ico('tag', 'Imprimer l’étiquette', '../api/atelier/productions/' + r.id + '/ticket'); certsOf(r).forEach(function(c){ ico('check', c.label, null, function(){ open(c.type, null, null, c.draft); }); }); }
+        if (false){ var a = node('a', 'btn small', door, 'Imprimer ↗'); a.href = printUrl(type, r); a.target = '_blank'; a.rel = 'noopener'; a.addEventListener('click', function(e){ e.stopPropagation(); }); var pd = node('a', 'btn small', door, 'PDF'); pd.href = pdfUrl(type, r); pd.target = '_blank'; pd.rel = 'noopener'; pd.addEventListener('click', function(e){ e.stopPropagation(); }); }
+        /* the right click: open, print, the ticket, the invoice drawn from a quote, delete */
+        ST.rowMenu(tr, function(){ var l = [{ label: 'Ouvrir', icon: 'open', run: function(){ open(type, r); } }];
+          if (!t.noDoc) l.push({ label: 'Imprimer le document', icon: 'print', href: printUrl(type, r) }, { label: 'Télécharger le PDF', icon: 'print', href: pdfUrl(type, r) });
+          if (isProd){ l.push({ label: 'Imprimer l’étiquette', icon: 'tag', href: '../api/atelier/productions/' + r.id + '/ticket' }); var cs = certsOf(r); if (cs.length) l.push('-'); cs.forEach(function(c){ l.push({ label: c.label, icon: 'check', run: function(){ open(c.type, null, null, c.draft); } }); }); }
+          if (type === 'devis' && A.types.factures && A.types.factures.write) l.push('-', { label: 'Créer la facture', icon: 'euro', run: function(){ open('factures', null, r.id); } });
+          if (t.write && (x.r.reference || x.r.number)) l.push({ label: 'Copier le numéro', icon: 'copy', run: function(){ ST.copy(String(x.r.reference || x.r.number)); } });
+          if (t.write && !opts.noPick && A.admin) l.push('-', { label: 'Supprimer', icon: 'trash', danger: true, run: function(){ if (!confirm('Supprimer ' + t.one.toLowerCase() + ' ' + (r.reference || r.number) + ' ? Il ira dans les archives.')) return; api('atelier/' + type + '/' + r.id, { method: 'DELETE' }).then(function(z){ if (!z.ok){ toast('Non supprimé : ' + (z.body.error || z.status), true); return; } toast('Supprimé, rangé dans les archives.'); refresh(); }); } });
+          return l; }, String(x.cells[1] || x.cells[0]));
         tr.tabIndex = 0; tr.addEventListener('click', function(e){ if (e.target.tagName === 'INPUT') return; open(type, r); });
         tr.addEventListener('keydown', function(e){ if (e.target === tr && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); open(type, r); } });
       });
-      if (!rows.length){ var e = node('tr', 'plain', tb), c = node('td', 'emptycell', e); c.colSpan = heads.length; node('div', 'note', c, 'Rien ne correspond.'); }
+      if (!rows.length){ var e = node('tr', 'plain', tb), c = node('td', 'emptycell', e); c.colSpan = heads.length + 1; node('div', 'note', c, 'Rien ne correspond.'); }
       ST.count(rows.length === all.length ? String(all.length) : rows.length + ' sur ' + all.length);
       if (pages > 1){ var pv = node('button', 'btn small', pager, 'Précédent'), lab = node('span', 'note', pager, 'Page ' + (u.page + 1) + ' sur ' + pages), nx = node('button', 'btn small', pager, 'Suivant'); lab.className = 'note';
         pv.disabled = !u.page; nx.disabled = u.page >= pages - 1; pv.addEventListener('click', function(){ u.page--; fill(); }); nx.addEventListener('click', function(){ u.page++; fill(); }); }
@@ -164,6 +183,7 @@ function control(box, f, V, onChange, off, sugg){
     el = select(box, f[1], [['', kind === 'vendor' ? 'Choisir un fournisseur…' : 'Aucune']].concat((kind === 'vendor' ? A.records.vendors : A.records.productions).map(function(o){ return [o.id, kind === 'vendor' ? o.fullName : o.reference + ' · ' + txt(o.productName)]; })), V[key] || '', function(v){ set(v); if (kind === 'production' && V.onProduction) V.onProduction(v); });
   }
   else if (kind === 'calc'){ el = node('input', 'calc', box); el.readOnly = true; el.tabIndex = -1; el.value = txt(V[key]).replace('.', ','); }
+  else if (kind === 'piece'){ el = select(box, f[1], [['', 'Aucune (hors site)']].concat(ST.S.pieces.filter(function(p){ return p.rayon; }).map(function(p){ return [p.slug, p.name + (p.price ? ' · ' + euros(p.price) : '')]; })), V[key] || '', function(v){ set(v); var p = ST.S.pieces.filter(function(x){ return x.slug === v; })[0]; if (p){ if (!txt(V.productName) || V.nomDePiece){ V.productName = p.name; V.nomDePiece = true; } if (p.image && !V.avatarData) V.avatar = 'site:' + p.image; if (onChange) onChange(); } }); }
   else {
     el = node('input', '', box); el.type = kind === 'number' ? 'number' : (kind === 'date' ? 'date' : 'text'); if (kind === 'number'){ el.step = 'any'; el.min = 0; }
     el.value = txt(V[key]);
@@ -188,8 +208,21 @@ function photoField(box, V, off){
   show();
   if (off) return;
   var up = node('label', 'btn small', side, 'Choisir un fichier'), fi = node('input', '', up); fi.type = 'file'; fi.accept = 'image/jpeg,image/png,image/webp'; fi.hidden = true;
-  fi.addEventListener('change', function(){ var file = fi.files[0]; if (!file) return; var r = new FileReader(); r.onload = function(){ V.avatarData = r.result; show(); }; r.readAsDataURL(file); });
-  select(side, 'Photo d’une pièce du site', [['', 'Ou une pièce du site…']].concat(ST.S.pieces.map(function(p){ return [p.slug, p.name]; })), '', function(v){ var p = ST.S.pieces.filter(function(x){ return x.slug === v; })[0]; if (!p) return; delete V.avatarData; V.avatar = 'site:' + p.image; show(); if (V.onPiece) V.onPiece(p); });
+  var takeFile = function(file){ if (!file) return; if (!/^image\/(jpeg|png|webp)$/.test(file.type)){ toast(file.name + ' : il faut un JPEG, un PNG ou un WebP', true); return; } var r = new FileReader(); r.onload = function(){ V.avatarData = r.result; show(); }; r.readAsDataURL(file); };
+  fi.addEventListener('change', function(){ takeFile(fi.files[0]); fi.value = ''; });
+  /* 10 octobre (Raouf : bigger, easier, faster) : the whole zone takes the drop, and a site piece is found by typing its name */
+  wrap.classList.add('drop'); wrap.title = 'Glissez une photo n’importe où ici';
+  wrap.addEventListener('dragover', function(e){ e.preventDefault(); wrap.classList.add('hot'); }); wrap.addEventListener('dragleave', function(e){ if (!wrap.contains(e.relatedTarget)) wrap.classList.remove('hot'); });
+  wrap.addEventListener('drop', function(e){ e.preventDefault(); wrap.classList.remove('hot'); takeFile(e.dataTransfer.files[0]); });
+  frame.addEventListener('click', function(){ fi.click(); }); frame.style.cursor = 'pointer';
+  node('span', 'fhint', side, 'Ou glissez la photo n’importe où dans ce cadre, ou cliquez le carré.');
+  var find = node('div', 'piecefind', side), fin = node('input', '', find); fin.type = 'search'; fin.placeholder = 'Ou tapez le nom d’une pièce du site…'; fin.setAttribute('aria-label', 'Pièce du site'); var hits = node('div', 'hits', find); hits.hidden = true;
+  var pick = function(p){ delete V.avatarData; V.avatar = 'site:' + p.image; show(); fin.value = p.name; hits.hidden = true; if ('slug' in V || V.onPiece) V.slug = p.slug; if (V.onPiece) V.onPiece(p); };
+  var seek = function(){ var q = fin.value.trim().toLocaleLowerCase(); hits.innerHTML = ''; if (!q){ hits.hidden = true; return; } var score = function(p){ var n = p.name.toLocaleLowerCase(); return n.indexOf(q) === 0 ? 0 : (n.split(' ').some(function(w){ return w.indexOf(q) === 0; }) ? 1 : 2); }; var found = ST.S.pieces.filter(function(p){ return (p.name + ' ' + p.slug).toLocaleLowerCase().indexOf(q) >= 0; }).sort(function(a, b){ return score(a) - score(b) || a.name.localeCompare(b.name, 'fr'); }).slice(0, 8);
+    found.forEach(function(p){ var b = node('button', 'hit', hits); b.type = 'button'; if (p.image){ var im = node('img', '', b); im.src = '../site/' + p.image; im.alt = ''; } node('span', '', b, p.name); b.addEventListener('click', function(){ pick(p); }); });
+    if (!found.length) node('span', 'none', hits, 'Aucune pièce de ce nom.'); hits.hidden = false; };
+  fin.addEventListener('input', seek); fin.addEventListener('focus', seek); fin.addEventListener('keydown', function(k){ if (k.key === 'Enter'){ k.preventDefault(); var b = hits.querySelector('.hit'); if (b) b.click(); } if (k.key === 'Escape') hits.hidden = true; });
+  document.addEventListener('mousedown', function(e){ if (!find.contains(e.target)) hits.hidden = true; });
   var rm = node('button', 'btn small', side, 'Retirer la photo'); rm.type = 'button'; rm.addEventListener('click', function(){ delete V.avatarData; V.avatar = ''; show(); });
 }
 /* the lines of a document, the stones of a certificate, the lines of a production: one card per line */
@@ -217,6 +250,30 @@ function itemsBlock(box, f, V, onChange, off, extra){
 
 /* ---------- THE RECORD, STEP BY STEP: his steps in his order, Back and Next, a summary before saving ---------- */
 var PROD_STEPS = ['basicInfo', 'mounts', 'diamonds', 'gems', 'sertissage', 'internalServices'];
+/* 10 octobre (Ghassen : a certificate for each piece) : the certificates a production can open, prefilled from it ;
+   the jewel certificate always, a gem certificate when it carries gems, a diamond certificate when it carries diamonds */
+/* the image of a record on screen : its own photo, else the photo of the site piece it is linked to */
+function imageSrc(r){ var a = txt(r.avatar); if (a.indexOf('image:') === 0) return '../api/atelier/image/' + a.slice(6); if (a.indexOf('site:') === 0) return '../site/' + a.slice(5);
+  if (r.slug){ var pc = ST.S.pieces.filter(function(x){ return x.slug === r.slug; })[0]; if (pc && pc.image) return '../site/' + pc.image; } return ''; }
+/* 10 octobre (Raouf : "I can't find the certificate here") : a jewel certificate from a site piece, prefilled from it, opened in the Atelier */
+ST.certifierPiece = function(p){
+  var today = new Date().toISOString().slice(0, 10), det = (p.details || []), find = function(k){ var d = det.filter(function(x){ return new RegExp(k, 'i').test(x[0]); })[0]; return d ? d[1] : ''; };
+  var monture = (p.options || []).filter(function(o){ return o.a === 'Monture'; })[0], metal = monture && monture.v && monture.v.length ? monture.v.join(' / ') : find('or|métal|metal');
+  var draft = { lang: 'en', date: today, productName: p.name || '', avatar: p.image ? 'site:' + p.image : '', category: ST.S.rayons && ST.S.rayons[p.rayon] ? ST.S.rayons[p.rayon] : (p.rayon || ''), material: metal || '', inscription: find('poinçon|inscription|titre') || '750/1000' };
+  ST.open('cert-bijoux');
+  (A ? Promise.resolve() : fetchAll()).then(function(){ setTimeout(function(){ open('cert-bijoux', null, null, draft); }, 150); });
+};
+function certsOf(r){
+  var today = new Date().toISOString().slice(0, 10), mainD = (r.diamondsItems || []).filter(function(x){ return x.isMainDiamond; })[0] || (r.diamondsItems || [])[0], gem = (r.gemsItems || [])[0];
+  var gold = (r.mountsItems || []).reduce(function(s, x){ return s + (Number(x.weight18k) || 0); }, 0), out = [];
+  var base = { lang: 'en', date: today, productName: r.productName || '', avatar: r.avatar || '' };
+  if (A.types['cert-bijoux'] && A.types['cert-bijoux'].write) out.push({ type: 'cert-bijoux', label: 'Certificat de bijou', draft: Object.assign({}, base, { productId: r.id, category: r.parentCategory || r.category || '', material: gold ? 'Or 18 k, ' + String(Math.round(gold * 100) / 100).replace('.', ',') + ' g' : '', weight: gold || '', totalWeight: gold || '',
+    diamondsItems: (r.diamondsItems || []).map(function(d){ return { isMainDiamond: !!d.isMainDiamond, shape: 'Round Brilliant', ct: Number(d.ct) || '', numeroPt: 1, weight: Number(d.ct) || '', measurements: '', colourGrade: '', clarityGrade: '', symmetry: '' }; }),
+    gemsItems: (r.gemsItems || []).map(function(g){ return { isMainGem: false, shape: '', weight: Number(g.carat) || '', color: '', specy: g.type || '', variety: '', transparency: '' }; }) }) });
+  if (mainD && A.types['cert-diamants'] && A.types['cert-diamants'].write) out.push({ type: 'cert-diamants', label: 'Certificat de diamant', draft: Object.assign({}, base, { carat: Number(mainD.ct) || '', inscription: mainD.lots || '' }) });
+  if (gem && A.types['cert-gemmes'] && A.types['cert-gemmes'].write) out.push({ type: 'cert-gemmes', label: 'Certificat de gemme', draft: Object.assign({}, base, { weight: Number(gem.carat) || '', species: gem.type || '', color: '' }) });
+  return out;
+}
 function open(type, rec, quoteId, draft, at){
   var t = A.types[type], isNew = !rec, V = draft || JSON.parse(JSON.stringify(rec || {})), m = A.maison, steps = t.steps, step = at || 0;
   if (isNew && !draft){
@@ -224,7 +281,7 @@ function open(type, rec, quoteId, draft, at){
     if (type === 'livraisons'){ V.number = t.next; V.transferorCompany = m.fullName || ''; V.transferorAddress = m.address || ''; V.transferorVatNumber = m.vatNumber || ''; V.transferorTaxCode = m.taxCode || ''; }
     if (type === 'devis'){ V.gainPercentage = 0; V.items = [{ quantity: 1 }]; }
     if (type === 'transports'){ V.number = t.next; V.senderCompany = m.fullName || ''; V.senderAddress = m.address || ''; V.senderVatNumber = m.vatNumber || ''; V.senderTaxCode = m.taxCode || ''; V.reglement = 'inAccount'; }
-    if (quoteId){ V.quoteId = quoteId; V.quote = A.records.devis.filter(function(d){ return d.id === quoteId; })[0] || {}; step = 1; }
+    if (quoteId){ V.quoteId = quoteId; V.quote = A.records.devis.filter(function(d){ return d.id === quoteId; })[0] || {}; if (V.quote.lang) V.lang = V.quote.lang; step = 1; }
   }
   /* what this account may write: everything for an admin; for a production, the steps ticked for it */
   var rights = A.my ? A.my.production : null, mayStep = function(i){ return t.write && (type !== 'productions' || !rights || rights[PROD_STEPS[i]].edit); }, seesStep = function(i){ return type !== 'productions' || !rights || rights[PROD_STEPS[i]].edit || rights[PROD_STEPS[i]].viewOnly; };
@@ -243,12 +300,16 @@ function open(type, rec, quoteId, draft, at){
   var sum = function(){ return type === 'transports' ? (V.transportItem || []).reduce(function(s2, it){ return s2 + N(it.price) * N(it.quantity); }, 0) : localTotal(Q()); };
   var totalEl = null, head = function(){
     title.textContent = txt(Q()[t.name]) || (isNew ? 'Nouveau : ' + t.one.toLowerCase() : t.one);
-    sub.textContent = (isNew ? ('number' in V ? 'Numéro ' + txt(V.number) : 'Portera le numéro ' + t.next) : 'N° ' + (V.reference || V.number)) + (t.money ? ' · ' + euros(sum()) : '');
+    /* 10 octobre : at creation the number is an input, filled with the next free one ; the server refuses a number already given */
+    if (isNew && !('number' in V)){ if (!sub.numInput){ sub.textContent = ''; node('span', '', sub, 'Numéro '); var ni = node('input', 'inline num', sub); ni.value = V.reference || t.next; ni.setAttribute('aria-label', 'Numéro du document'); ni.addEventListener('input', function(){ V.reference = ni.value.trim(); }); sub.numInput = ni; sub.money = node('span', '', sub, ''); }
+      sub.money.textContent = t.money ? ' · ' + euros(sum()) : ''; }
+    else sub.textContent = (isNew ? 'Numéro ' + txt(V.number) : 'N° ' + (V.reference || V.number)) + (t.money ? ' · ' + euros(sum()) : '');
     if (totalEl) totalEl.textContent = euros(sum());
   };
   /* the stepper: his steps, then the last one (Preview, Total costs, Summary). A step is one press away at any time. */
   var names = steps.map(function(s){ return s[0]; }).concat([t.last]), tabs = node('div', 'ptabs atl-steps', form), host = node('div', 'atl-step', form), foot = node('div', 'actions marks formfoot', form);
-  names.forEach(function(nm, i){ var b = node('button', i === step ? 'cur' : '', tabs, (i + 1) + '. ' + nm); b.type = 'button'; b.hidden = i < steps.length && steps[i][1].length === 1 && !seesStep(steps[i][1][0]) && type === 'productions'; b.addEventListener('click', function(){ go(i); }); });
+  var shown = 0;
+  names.forEach(function(nm, i){ var hid = type === 'productions' && i < steps.length && steps[i][1].length === 1 && !seesStep(steps[i][1][0]); if (!hid) shown++; var b = node('button', i === step ? 'cur' : '', tabs, (hid ? '' : shown + '. ') + nm); b.type = 'button'; b.hidden = i < steps.length && steps[i][1].length === 1 && !seesStep(steps[i][1][0]) && type === 'productions'; b.addEventListener('click', function(){ go(i); }); });
   function go(i){ if (t.fromQuote && isNew && i > 0 && !V.quoteId){ toast('Il faut d’abord choisir un devis.', true); return; } step = i; Array.prototype.forEach.call(tabs.children, function(b, k){ b.className = k === i ? 'cur' : ''; }); drawStep(); el('panel').scrollTop = 0; }
   function el(id){ return document.getElementById(id); }
   function drawStep(){
@@ -300,7 +361,7 @@ function open(type, rec, quoteId, draft, at){
         var v = say(f, V[f[0]]); if (!v || (f[2] === 'check' && !V[f[0]])) return; any = true; var r = node('div', 'field', list); node('label', '', r, f[1]); node('div', 'v', r, v); }); });
       if (any){ node('h3', '', node('div', 'sec', host), s[0]); host.appendChild(box); }
     });
-    if (t.money){ var tot = node('div', 'atl-total', host); node('span', '', tot, 'Total'); totalEl = node('b', '', tot); }
+    if (t.money){ var tot = node('div', 'atl-total', host); node('span', '', tot, vatRate() ? 'Total TTC, TVA ' + String(vatRate()).replace('.', ',') + ' %' : 'Total'); totalEl = node('b', '', tot); }
   }
   function drawFoot(){
     foot.innerHTML = ''; var last = step >= steps.length;
@@ -308,20 +369,20 @@ function open(type, rec, quoteId, draft, at){
     if (!last){ var nx = node('button', isNew ? 'mark' : 'btn', foot, 'Suivant →'); nx.type = 'button'; nx.addEventListener('click', function(){ go(step + 1); }); }
     if (t.write && (last || !isNew)){ var sv = node('button', 'mark', foot, isNew ? 'Créer' : 'Enregistrer'); sv.type = 'button'; sv.addEventListener('click', function(){ save(sv); }); }
     if (!isNew){
-      if (!t.noDoc){ var pr = node('a', 'btn push', foot, 'Imprimer ↗'); pr.href = printUrl(type, V); pr.target = '_blank'; pr.rel = 'noopener'; }
-      if (type === 'productions'){ var tk = node('a', 'btn push', foot, 'Étiquette ↗'); tk.href = '../api/atelier/productions/' + V.id + '/ticket'; tk.target = '_blank'; tk.rel = 'noopener'; }
+      if (!t.noDoc){ var pr = node('a', 'btn push', foot, 'Imprimer ↗'); pr.href = printUrl(type, V); pr.target = '_blank'; pr.rel = 'noopener'; var pf = node('a', 'btn', foot, 'PDF ↓'); pf.href = pdfUrl(type, V); pf.target = '_blank'; pf.rel = 'noopener'; }
+      if (type === 'productions'){ certsOf(V).forEach(function(c){ var cb = node('button', 'btn', foot, c.label); cb.type = 'button'; cb.addEventListener('click', function(){ open(c.type, null, null, c.draft); }); }); var tk = node('a', 'btn push', foot, 'Imprimer l’étiquette ↗'); tk.href = '../api/atelier/productions/' + V.id + '/ticket'; tk.target = '_blank'; tk.rel = 'noopener'; }
       if (type === 'devis' && A.types.factures.write){ var inv = node('button', 'btn', foot, 'Créer la facture'); inv.type = 'button'; inv.addEventListener('click', function(){ open('factures', null, V.id); }); }
-      if (t.write){ var del = node('button', 'mark gone', foot, 'Supprimer'); del.type = 'button'; del.addEventListener('click', function(){ if (!confirm('Supprimer ' + t.one.toLowerCase() + ' ' + (V.reference || V.number) + ' ? Il ira dans les archives.')) return; api('atelier/' + type + '/' + V.id, { method: 'DELETE' }).then(function(r){ if (!r.ok){ toast('Non supprimé : ' + (r.body.error || r.status), true); return; } toast('Supprimé, rangé dans les archives.'); P.close(); refresh(); }); }); }
+      if (t.write && A.admin){ var del = node('button', 'mark gone', foot, 'Supprimer'); del.type = 'button'; del.addEventListener('click', function(){ if (!confirm('Supprimer ' + t.one.toLowerCase() + ' ' + (V.reference || V.number) + ' ? Il ira dans les archives.')) return; api('atelier/' + type + '/' + V.id, { method: 'DELETE' }).then(function(r){ if (!r.ok){ toast('Non supprimé : ' + (r.body.error || r.status), true); return; } toast('Supprimé, rangé dans les archives.'); P.close(); refresh(); }); }); }
     }
   }
   function save(btn){
     if (t.fromQuote && isNew && !V.quoteId){ toast('Il faut choisir un devis.', true); go(0); return; }
-    var out = Object.assign({}, V); delete out.onPiece; delete out.onProduction; delete out.quote; delete out.total;
+    var out = Object.assign({}, V); delete out.onPiece; delete out.onProduction; delete out.quote; delete out.total; delete out.nomDePiece;
     btn.disabled = true;
     api('atelier/' + type + (isNew ? '' : '/' + V.id), { method: isNew ? 'POST' : 'PUT', json: out }).then(function(r){
       btn.disabled = false;
       if (!r.ok){ toast('Non enregistré : ' + (r.body.error || r.status), true); return; }
-      toast(t.one + ' ' + (r.body.reference || r.body.number) + ' enregistré.');
+      toast(t.one + ' ' + (r.body.reference || r.body.number) + ' : enregistré.');
       fetchAll().then(function(){ ST.redraw(); var fresh = A.records[type].filter(function(x){ return x.id === r.body.id; })[0]; if (fresh) open(type, fresh, undefined, undefined, Math.min(step, A.types[type].steps.length)); });
     });
   }
@@ -375,22 +436,42 @@ function vendorSheet(body, V){
     if (A.admin){ var x = node('button', 'sign x', row, '×'); x.title = 'Retirer ce paiement de l’historique'; x.setAttribute('aria-label', 'Retirer le paiement ' + h.reference); x.addEventListener('click', function(){ if (!confirm('Retirer le paiement ' + h.reference + ' de l’historique ? Le dû ne change pas.')) return; api('atelier/vendorhistories/' + h.id, { method: 'DELETE' }).then(reopen); }); } });
 }
 
-/* ---------- the gold price: typed, dated, kept ---------- */
+/* ---------- the prices (10 octobre) : gold and silver the gram in euros, the Rapaport indices (their whole widget) ; read from free sources, never typed ---------- */
+function liveNote(){ var lu = A.coursLu; if (!lu || !lu.at) return 'Jamais lus. Les cours se lisent tout seuls toutes les douze heures, ou sur le bouton.';
+  return 'Lus le ' + day(txt(lu.at)) + ' à ' + txt(lu.at).slice(11, 16) + ' UTC' + (lu.usdEur ? ', change BCE 1 $ = ' + String(lu.usdEur).replace('.', ',') + ' € (' + day(txt(lu.fxDate)) + ')' : '') + (lu.manques && lu.manques.length ? '. Sans réponse : ' + lu.manques.join(' ; ') : '') + '.'; }
+function metalTile(box, label, g, fine, fineLabel){ var t = node('div', 'tile', box); node('div', 'big', t, g ? euros(g.price) : '—'); node('div', 'lbl', t, label + (g ? ', ' + day(txt(g.createdAt)) + (fine ? ' · ' + fineLabel + ' ' + euros(Math.round(g.price * fine * 100) / 100) : '') : '')); return t; }
 ST.register('or', function(host){
   if (!ready(host)) return;
-  node('h3', '', node('div', 'sec atl-head', host), 'Cours de l’or, le gramme de 24k en euros'); ST.count(String(A.gold.length));
+  var argent = A.argent || [], dia = A.diamants || [];
+  node('h3', '', node('div', 'sec atl-head', host), 'Cours du jour'); ST.count(String(A.gold.length + argent.length));
+  var tiles = node('div', 'tiles', host);
+  metalTile(tiles, 'Or 24 k, le gramme', A.gold[0], 0.75, 'Or 750 ‰ (18 k)'); metalTile(tiles, 'Argent, le gramme', argent[0], 0.925, 'Argent 925 ‰');
+  var rapi = dia.filter(function(x){ return x.source === 'RAPI'; });
+  var d1 = rapi.filter(function(x){ return x.caratMin === 1; })[0] || rapi[0], dt = node('div', 'tile', tiles); node('div', 'big', dt, d1 && d1.eurCt ? euros(d1.eurCt) : '—'); node('div', 'lbl', dt, d1 ? 'Diamant, le carat, ' + d1.driver + (d1.source === 'RAPI' ? ' (Rapaport)' : '') : 'Diamant, le carat : indice Rapaport');
+  node('p', 'fhint', host, liveNote());
   if (A.admin){
-    var fs = node('div', 'fields sender', host), P = { price: '', date: new Date().toISOString().slice(0, 10) };
-    var a = node('div', 'field half', fs); node('label', '', a, 'Cours, en euros par gramme'); control(a, ['price', 'Cours de l’or', 'number'], P);
-    var b = node('div', 'field half', fs); node('label', '', b, 'Date du cours'); control(b, ['date', 'Date du cours', 'date'], P);
-    var acts = node('div', 'marks', host), go = node('button', 'mark', acts, 'Enregistrer le cours');
-    go.addEventListener('click', function(){ api('atelier/or', { method: 'POST', json: P }).then(function(r){ if (!r.ok){ toast('Non enregistré : ' + (r.body.error || r.status), true); return; } toast('Cours enregistré.'); refresh(); }); });
-    if (A.goldApi){ var live = node('button', 'btn', acts, 'Lire le cours sur goldapi.io'); live.addEventListener('click', function(){ api('atelier/or/actualiser', { method: 'POST' }).then(function(r){ if (!r.ok){ toast('Cours non lu : ' + (r.body.error || r.status), true); return; } toast('Cours lu : ' + euros(r.body.price)); refresh(); }); }); }
+    var acts0 = node('div', 'marks', host), live = node('button', 'mark', acts0, 'Lire les cours maintenant'); live.type = 'button';
+    live.addEventListener('click', function(){ live.disabled = true; api('atelier/or/actualiser', { method: 'POST' }).then(function(r){ live.disabled = false; if (!r.ok){ toast('Cours non lus : ' + (r.body.error || r.status), true); return; }
+      toast('Lus : or ' + (r.body.price ? euros(r.body.price) : '—') + ', argent ' + (r.body.argent ? euros(r.body.argent) : '—') + ', ' + r.body.diamants + ' lignes de diamants' + (r.body.manques && r.body.manques.length ? '. Sans réponse : ' + r.body.manques.join(' ; ') : '')); refresh(); }); });
+    node('p', 'fhint', host, 'Sources : gold-api.com (l’once en dollars), Banque centrale européenne (le change), Rapaport (les mêmes données que leur page diamond-price-index : diamants, métaux, devises, indices). Rien de tout cela ne va sur le site.' + (A.goldApi ? ' goldapi.io passe devant pour l’or.' : ''));
   }
-  if (!A.gold.length){ empty(host, 'Aucun cours enregistré', 'Le coût actuel et le prix de vente des productions se comptent avec le dernier cours.'); return; }
-  var tb = tableOf(host, ['Date', 'Cours', 'Écart', 'Source', '']);
-  A.gold.forEach(function(g, i){ var tr = node('tr', 'plain', tb), prev = A.gold[i + 1]; node('td', 'first', tr, day(txt(g.createdAt))); node('td', 'num', tr, euros(g.price)); node('td', 'mute', tr, prev ? String(round3(g.price - prev.price)).replace('.', ',') : ''); node('td', 'mute', tr, txt(g.source));
-    var d = node('td', 'door', tr); if (A.admin){ var x = node('button', 'btn small', d, 'Retirer'); x.addEventListener('click', function(){ if (!confirm('Retirer ce cours ?')) return; api('atelier/or/' + g.id, { method: 'DELETE' }).then(refresh); }); } });
+  /* their whole widget, the same file as the site (rapi.js), on the feed kept at the last reading */
+  node('h3', '', node('div', 'sec', host), 'Les indices Rapaport');
+  if (!A.rapaport) node('p', 'note', host, 'Aucune lecture pour l’instant : les indices arrivent avec la première lecture des cours.');
+  else if (!window.ALAYA_RAPI) node('p', 'note', host, 'rapi.js ne s’est pas chargé.');
+  else { var rr = node('div', 'rapi-root', host); window.ALAYA_RAPI.render(rr, A.rapaport, 'fr', { estimer: function(p){ return api('atelier/estimation?' + Object.keys(p).map(function(k){ return k + '=' + encodeURIComponent(p[k]); }).join('&')).then(function(r){ if (!r.ok) throw new Error(r.body.error || r.status); return r.body; }); } }); }
+  node('p', 'fhint', host, 'Le calcul ci-dessus interroge StoneAlgo en direct, pour n’importe quelle pierre. Ces indices restent dans le studio : rien ne s’affiche sur le site.')
+  node('h3', '', node('div', 'sec', host), 'Or 24 k, le gramme');
+  var history = function(list, label){
+    if (!list.length){ node('p', 'note', host, 'Aucun cours de ' + label + ' enregistré.'); return; }
+    var tb = tableOf(host, [['Date', 'date'], ['Cours', 'money'], ['Écart', 'number'], ['Source', 'text'], '']);
+    list.forEach(function(g, i){ var tr = node('tr', 'plain', tb), prev = list[i + 1]; node('td', 'first', tr, day(txt(g.createdAt))); node('td', 'num', tr, euros(g.price)); node('td', 'mute', tr, prev ? String(round3(g.price - prev.price)).replace('.', ',') : ''); node('td', 'mute', tr, txt(g.source));
+      var d = node('td', 'door', tr); if (A.admin){ var x = node('button', 'btn small', d, 'Retirer'); x.addEventListener('click', function(){ if (!confirm('Retirer ce cours ?')) return; api('atelier/or/' + g.id, { method: 'DELETE' }).then(refresh); }); } });
+  };
+  history(A.gold, 'l’or');
+  node('h3', '', node('div', 'sec', host), 'Argent, le gramme');
+  history(argent, 'l’argent');
+  node('p', 'fhint', host, 'Rien ne se tape ici : les cours se lisent tout seuls toutes les douze heures. Le coût actuel et le prix de vente des productions suivent le dernier cours de l’or lu.');
 });
 
 /* ---------- the archives (his seven archive tables in one screen): what was deleted, with its way back ---------- */
@@ -399,7 +480,7 @@ ST.register('archives', function(host){
   node('h3', '', node('div', 'sec atl-head', host), 'Archives'); var keys = Object.keys(A.archives), n = 0;
   if (!keys.length){ empty(host, 'Rien dans les archives', 'Ce qui est supprimé dans l’atelier arrive ici et peut être remis à sa place.'); ST.count('0'); return; }
   keys.forEach(function(k){ var t = A.types[k]; node('h3', '', node('div', 'sec', host), t.one);
-    var tb = tableOf(host, ['N°', 'Nom', 'Supprimé le', '']);
+    var tb = tableOf(host, [['N°', 'number'], ['Nom', 'text'], ['Supprimé le', 'date'], '']);
     A.archives[k].slice().reverse().forEach(function(r){ n++; var src = t.fromQuote ? (r.quote || {}) : r, tr = node('tr', 'plain', tb); node('td', 'first', tr, r.reference || r.number || ''); node('td', '', tr, txt(src[t.name] || (r.income && ((r.income.quote || {}).customerName)) || '')); node('td', 'mute', tr, day(txt(r.deletedAt)));
       var d = node('td', 'door', tr), b = node('button', 'btn small', d, 'Remettre'); b.addEventListener('click', function(){ api('atelier/' + k + '/' + r.id + '/restaurer', { method: 'POST' }).then(function(x){ if (!x.ok){ toast('Non remis : ' + (x.body.error || x.status), true); return; } toast(t.one + ' remis à sa place.'); refresh(); }); }); }); });
   ST.count(String(n));
@@ -407,7 +488,7 @@ ST.register('archives', function(host){
 
 /* ---------- the dashboard, in the order of his: overview, product status, gold price, categories, activity, logs ---------- */
 var dashDay = '', dashSpan = '7';
-var WHAT = { create: 'Création', update: 'Modification', 'delete': 'Suppression', restore: 'Remise en place', paiement: 'Paiement d’un fournisseur', 'paiement-delete': 'Paiement retiré', service: 'Travail d’un fournisseur', or: 'Cours de l’or', 'or-delete': 'Cours retiré', maison: 'Maison', droits: 'Droits d’un utilisateur' };
+var WHAT = { create: 'Création', update: 'Modification', 'delete': 'Suppression', restore: 'Remise en place', paiement: 'Paiement d’un fournisseur', 'paiement-delete': 'Paiement retiré', service: 'Travail d’un fournisseur', or: 'Cours de l’or', cours: 'Cours lus (or, argent, diamants)', pdf: 'PDF du document', 'or-delete': 'Cours retiré', maison: 'Maison', droits: 'Droits d’un utilisateur' };
 ST.register('tableau', function(host){
   if (!ready(host)) return;
   var D = A.dash; ST.count('');
@@ -442,8 +523,9 @@ ST.register('tableau', function(host){
 ST.register('droits', function(host){
   if (!ready(host)) return;
   node('h3', '', node('div', 'sec atl-head', host), 'Utilisateurs et droits'); ST.count(String((A.users || []).length));
-  node('p', 'note', host, 'Les comptes se créent dans Comptes. Un admin du studio fait tout ; pour les autres, on coche ici ce qu’ils voient et modifient dans l’atelier.');
-  var tb = tableOf(host, ['Nom', 'Rôle', 'Droits dans l’atelier', '']);
+  node('p', 'note', host, 'Un compte se crée dans Réglages > Comptes (adresse, mot de passe, rôle admin ou lecture). Un admin fait tout ; pour un compte en lecture, on coche ici, ligne par ligne, ce qu’il voit et ce qu’il modifie dans l’atelier.');
+  var ua = node('div', 'marks', host), ub = node('button', 'btn primary', ua, '+ Ajouter un compte'); ub.type = 'button'; ub.addEventListener('click', function(){ ST.open('comptes'); });
+  var tb = tableOf(host, [['Nom', 'client'], ['Rôle', 'text'], ['Droits dans l’atelier', 'list'], '']);
   var DOCS = [['quotes', 'Devis'], ['invoice', 'Factures'], ['transport', 'Transport'], ['deliveryNotes', 'Bons de livraison'], ['incomeReports', 'Rapports de revenus']], STEP = [['basicInfo', 'Informations de base'], ['mounts', 'Montures'], ['diamonds', 'Diamants'], ['gems', 'Gemmes'], ['sertissage', 'Sertissage'], ['internalServices', 'Services internes']];
   (A.users || []).forEach(function(u){
     var tr = node('tr', '', tb), r = u.rights, admin = u.role === 'admin', has = DOCS.filter(function(d){ return r[d[0]]; }).map(function(d){ return d[1]; }).concat(STEP.some(function(s){ return r.production[s[0]].edit || r.production[s[0]].viewOnly; }) ? ['Production'] : []);
@@ -462,13 +544,57 @@ ST.register('droits', function(host){
 });
 
 /* ---------- the house: who signs the documents, and the settings his app kept in the account and the filter bar ---------- */
+var PRINT_KEYS = ['ticketWidth', 'ticketHeight', 'ticketFontScale', 'docFontSize', 'docMarginSide', 'docLogoHeight'];
+/* 10 octobre : Réglages > Impression, the print settings on their own, simply : the label, the documents, a sample to look at */
+ST.register('impression', function(host){
+  if (!ready(host)) return;
+  var V = Object.assign({}, A.maison);
+  node('h3', '', node('div', 'sec atl-head', host), 'Impression');
+  node('p', 'note', host, 'Ce qui règle l’étiquette de production et les documents imprimés. Une case vide garde la valeur par défaut.');
+  var card = function(title, keys){ var c = node('div', 'setcard', host); node('h4', '', c, title); var fs = node('div', 'fields sender', c); A.maisonFields.filter(function(f){ return keys.indexOf(f[0]) >= 0; }).forEach(function(f){ fieldRow(fs, 'maison', f, V, null, !A.admin); }); return c; };
+  var c1 = card('L’étiquette de production', ['ticketWidth', 'ticketHeight', 'ticketFontScale']); node('p', 'fhint', c1, '60 × 30 mm par défaut. L’étiquette se voit en grand depuis une production : Imprimer l’étiquette.');
+  var c2 = card('Les documents (devis, factures, bons, certificats, fiches)', ['docFontSize', 'docMarginSide', 'docLogoHeight']); node('p', 'fhint', c2, 'Le format reste A4. Ouvrez un document après l’enregistrement pour voir l’effet.');
+  if (!A.admin) return;
+  var sv = node('button', 'mark', node('div', 'actions marks formfoot', host), 'Enregistrer');
+  sv.addEventListener('click', function(){ api('atelier/maison', { method: 'PUT', json: V }).then(function(r){ if (!r.ok){ toast('Non enregistré : ' + (r.body.error || r.status), true); return; } toast('Réglages d’impression enregistrés.'); refresh(); }); });
+});
+/* Réglages > Mon compte : my name, my password ; and what the studio does not do (mails to users, languages) said plainly */
+ST.register('moi', function(host){
+  ST.title('Mon compte'); ST.count('');
+  var me = ST.S.me || {}, c = node('div', 'setcard', host); node('h4', '', c, 'Qui je suis');
+  var fs = node('div', 'fields sender', c), f1 = node('div', 'field', fs); node('label', '', f1, 'Identifiant'); var id = node('input', '', f1); id.value = me.email || ''; id.disabled = true;
+  var f2 = node('div', 'field', fs); node('label', '', f2, 'Nom affiché'); var nm = node('input', '', f2); nm.value = me.name || '';
+  var f3 = node('div', 'field', fs); node('label', '', f3, 'Rôle'); var ro = node('input', '', f3); ro.value = me.role === 'admin' ? 'Admin' : 'Lecture'; ro.disabled = true;
+  var sv = node('button', 'mark', node('div', 'marks', c), 'Enregistrer le nom'); sv.type = 'button';
+  sv.addEventListener('click', function(){ api('moi', { method: 'PUT', json: { name: nm.value } }).then(function(r){ if (!r.ok){ toast('Non enregistré : ' + (r.body.error || r.status), true); return; } toast('Nom enregistré.'); ST.reload(); }); });
+  var c2 = node('div', 'setcard', host); node('h4', '', c2, 'Mon mot de passe');
+  var fs2 = node('div', 'fields sender', c2), p1 = node('div', 'field half', fs2); node('label', '', p1, 'Mot de passe actuel'); var cur = node('input', '', p1); cur.type = 'password'; cur.autocomplete = 'current-password';
+  var p2 = node('div', 'field half', fs2); node('label', '', p2, 'Nouveau mot de passe (dix caractères au moins)'); var nw = node('input', '', p2); nw.type = 'password'; nw.autocomplete = 'new-password';
+  var p3 = node('div', 'field half', fs2); node('label', '', p3, 'Le nouveau, encore'); var nw2 = node('input', '', p3); nw2.type = 'password'; nw2.autocomplete = 'new-password';
+  var pw = node('button', 'mark', node('div', 'marks', c2), 'Changer le mot de passe'); pw.type = 'button';
+  pw.addEventListener('click', function(){ if (nw.value !== nw2.value){ toast('Les deux nouveaux mots de passe ne sont pas les mêmes.', true); return; } api('moi', { method: 'PUT', json: { current: cur.value, password: nw.value } }).then(function(r){ if (!r.ok){ toast('Non changé : ' + (r.body.error || r.status), true); return; } toast('Mot de passe changé.'); cur.value = nw.value = nw2.value = ''; }); });
+  var c3 = node('div', 'setcard', host); node('h4', '', c3, 'Ce que le studio ne fait pas');
+  node('p', 'note', c3, 'Pas de notification par e-mail aux comptes du studio, et pas d’autre langue que le français pour l’écran : les documents, eux, sortent en français, anglais ou italien. Le site, lui, parle les trois langues.');
+});
+/* Réglages > Aide : the map of the studio in one page */
+ST.register('aide', function(host){
+  ST.title('Aide'); ST.count('');
+  var H = [['Pièces', 'Toutes les pièces du site. Double-clic sur un nom ou un prix pour le changer ; le prix accepte Sur demande et Sur commande. Clic droit pour le reste. Ajouter une pièce crée sa page sur le site. Stock : ce qu’il y a en main, et l’état écrit sur la page (disponible, vendue, sur commande).'],
+    ['Site', 'Les textes des pages, la publication, les sauvegardes du site. Annuler la dernière écriture remet les fichiers tels qu’ils étaient.'],
+    ['Atelier', 'Les productions (photo, montures, diamants, gemmes, sertissage, services, coût, prix de vente), leur fiche imprimable et leur étiquette, les trois certificats, les fournisseurs et leurs paiements, les devis et les factures, la fonderie, l’inventaire, les cours de l’or, de l’argent et des diamants (Rapaport, StoneAlgo), le tableau de bord, le journal, les archives.'],
+    ['Mailing', 'Les contacts, les envois, les désinscrits.'], ['Ventes', 'Les commandes passées sur le site et leur paiement.'],
+    ['Réglages', 'La maison (identité sur les documents, TVA, validité des devis, coefficient de prix), l’impression (étiquette et documents), la boîte d’envoi, le paiement, les comptes et leurs droits, mon compte, les sauvegardes de la base.'],
+    ['Les documents', 'Chaque ligne d’une liste s’ouvre d’un clic. Au bout de la ligne : ouvrir, imprimer, PDF, l’étiquette, les certificats. Les documents s’impriment en français, anglais ou italien selon la langue choisie dans leur fiche.'],
+    ['Si quelque chose casse', 'Réglages > Sauvegardes : une sauvegarde de la base chaque jour, trente jours gardés. Site > Annuler la dernière écriture pour une page du site.']];
+  H.forEach(function(h){ var c = node('div', 'setcard', host); node('h4', '', c, h[0]); node('p', 'note', c, h[1]); });
+});
 ST.register('maison', function(host){
   if (!ready(host)) return;
   var V = Object.assign({}, A.maison);
   node('h3', '', node('div', 'sec atl-head', host), 'La maison sur les documents');
   node('p', 'note', host, 'Ces lignes s’impriment sur les devis, les factures, les bons et au pied des certificats. Une ligne vide ne s’imprime pas.');
   var fs = node('div', 'fields sender', host);
-  A.maisonFields.forEach(function(f){ fieldRow(fs, 'maison', f, V, null, !A.admin); });
+  A.maisonFields.filter(function(f){ return PRINT_KEYS.indexOf(f[0]) < 0; }).forEach(function(f){ fieldRow(fs, 'maison', f, V, null, !A.admin); });
   if (!A.admin) return;
   var sv = node('button', 'mark', node('div', 'actions marks formfoot', host), 'Enregistrer');
   sv.addEventListener('click', function(){ api('atelier/maison', { method: 'PUT', json: V }).then(function(r){ if (!r.ok){ toast('Non enregistré : ' + (r.body.error || r.status), true); return; } toast('La maison est enregistrée.'); refresh(); }); });
@@ -477,8 +603,9 @@ ST.register('maison', function(host){
 KEYS.forEach(function(k){ ST.register(k, listScreen(k)); });
 /* his inventory: the productions, with the quantity one press away, the empty ones in red */
 ST.register('inventaire', listScreen('productions', { key: 'inventaire', title: 'Inventaire', noNew: true, noPick: true,
-  cols: [['productName', 'Nom'], ['category', 'Catégorie'], ['createdAt', 'Date', 'date']], extraHead: ['Quantité'], rowClass: function(r){ return N(r.productQuantity) <= 0 ? 'late' : ''; },
-  extraCell: function(tr, p){ var c = node('td', 'field', tr), q = node('input', 'qty', c); q.type = 'number'; q.min = 0; q.step = 1; q.value = N(p.productQuantity); q.disabled = !A.types.productions.write; q.setAttribute('aria-label', 'Quantité de ' + txt(p.productName));
+  cols: [['productName', 'Nom'], ['category', 'Catégorie'], ['createdAt', 'Date', 'date']], extraHead: ['Pièce du site', 'Quantité à l’atelier'], rowClass: function(r){ return N(r.productQuantity) <= 0 ? 'late' : ''; },
+  extraCell: function(tr, p){ var sc = node('td', '', tr); if (p.slug){ var sp = ST.S.pieces.filter(function(x){ return x.slug === p.slug; })[0], a = node('a', 'btn small', sc, (sp ? sp.name : p.slug) + ' · son stock'); a.href = '#'; a.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); sessionStorage.setItem('alaya-stock-open', p.slug); ST.open('stock'); }); } else node('span', 'mute', sc, 'Hors site');
+    var c = node('td', 'field', tr), q = node('input', 'qty', c); q.type = 'number'; q.min = 0; q.step = 1; q.value = N(p.productQuantity); q.disabled = !A.types.productions.write; q.setAttribute('aria-label', 'Quantité de ' + txt(p.productName));
     q.addEventListener('click', function(e){ e.stopPropagation(); });
     q.addEventListener('change', function(){ api('atelier/productions/' + p.id, { method: 'PUT', json: { productQuantity: q.value } }).then(function(r){ if (!r.ok){ toast('Non enregistré : ' + (r.body.error || r.status), true); return; } toast('Quantité enregistrée.'); refresh(); }); }); } }));
 })();
